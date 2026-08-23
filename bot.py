@@ -39,12 +39,14 @@ async def forward_to_group(message: types.Message):
     else:
         target_thread = THREAD_GENERAL
 
-    forwarded = await message.forward(
+    sent_message = await bot.copy_message(
         chat_id=GROUP_CHAT_ID,
+        from_chat_id=message.chat.id,
+        message_id=message.message_id,
         message_thread_id=target_thread
     )
     
-    MESSAGE_MAP[forwarded.message_id] = message.from_user.id
+    MESSAGE_MAP[sent_message.message_id] = message.from_user.id
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def reply_from_group(message: types.Message):
