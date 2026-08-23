@@ -5,8 +5,12 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 
 TOKEN = "8902951037:AAGUmJd2xLIsst3QAmjwDWnIXHmtoQbOdZU"
+
 GROUP_CHAT_ID = -1003851569073
-MESSAGE_THREAD_ID = None
+
+THREAD_LUNA = 2
+THREAD_LYUT = 3
+THREAD_GENERAL = 4
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -16,7 +20,7 @@ MESSAGE_MAP = {}
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
-    welcome_text = "Привет! 👋 Напиши свой вопрос или сообщение в этот чат, и мы ответим тебе в самое ближайшее время!"
+    welcome_text = "тут будет написано что надо писать тег бла бла бла"
     await message.answer(welcome_text)
 
 @dp.message(F.chat.type == "private")
@@ -24,24 +28,23 @@ async def forward_to_group(message: types.Message):
     if not GROUP_CHAT_ID:
         return
 
-    user = message.from_user
-    user_info = f"📩 Сообщение от @{user.username or 'нет_ника'} (ID: `{user.id}`):"
-    
-    header_msg = await bot.send_message(
-        chat_id=GROUP_CHAT_ID,
-        text=user_info,
-        message_thread_id=MESSAGE_THREAD_ID
-    )
+    text = message.text or message.caption or ""
+    text_lower = text.lower()
+
+    # Выбираем ветку в зависимости от хэштега
+    if "#луна" in text_lower:
+        target_thread = THREAD_LUNA
+    elif "#люц" in text_lower:
+        target_thread = THREAD_LYUT
+    else:
+        target_thread = THREAD_GENERAL
 
     forwarded = await message.forward(
         chat_id=GROUP_CHAT_ID,
-        message_thread_id=MESSAGE_THREAD_ID
+        message_thread_id=target_thread
     )
     
-    MESSAGE_MAP[forwarded.message_id] = user.id
-    MESSAGE_MAP[header_msg.message_id] = user.id
-
-    await message.answer("✅ Сообщение доставлено администраторам!")
+    MESSAGE_MAP[forwarded.message_id] = message.from_user.id
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def reply_from_group(message: types.Message):
@@ -58,7 +61,6 @@ async def reply_from_group(message: types.Message):
                 from_chat_id=message.chat.id,
                 message_id=message.message_id
             )
-            await message.react([types.ReactionTypeEmoji(emoji="👍")])
         except Exception as e:
             logging.error(f"Не удалось отправить ответ пользователю: {e}")
 
