@@ -101,14 +101,14 @@ async def reply_from_group(message: types.Message):
             logging.error(f"Не удалось отправить ответ пользователю: {e}")
 
 async def handle_webhook(request: web.Request):
-    url_token = request.match_info.get("token")
-    if url_token != TOKEN:
-        return web.Response(status=403)
-    
-    data = await request.json()
-    telegram_update = Update(**data)
-    await dp.feed_update(bot=bot, update=telegram_update)
-    return web.Response(status=200)
+    try:
+        data = await request.json()
+        telegram_update = Update(**data)
+        await dp.feed_update(bot=bot, update=telegram_update)
+        return web.Response(status=200)
+    except Exception as e:
+        logging.error(f"Ошибка при обработке вебхука: {e}")
+        return web.Response(status=500)
 
 async def handle_ping(request: web.Request):
     return web.Response(text="Бот успешно работает через Webhooks!")
@@ -134,4 +134,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
