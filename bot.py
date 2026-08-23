@@ -4,6 +4,7 @@ import asyncio
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
+from aiogram.types import Update
 
 TOKEN = "8866396965:AAET0Ra7IFCjx5Yspm4xYH5ujEPUjyGMggM"
 GROUP_CHAT_ID = -1003959716659
@@ -23,17 +24,9 @@ dp = Dispatcher()
 
 MESSAGE_MAP = {}
 
-async def handle(request):
-    return web.Response(text="Bot is running!")
+WEBHOOK_PATH = f"/{TOKEN}"
 
-async def web_server():
-    app = web.Application()
-    app.router.add_get("/", handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
+WEBHOOK_URL = f"https://telegram-bot-pr8q.onrender.com{WEBHOOK_PATH}"
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
@@ -61,7 +54,7 @@ async def start_handler(message: types.Message):
 async def forward_to_group(message: types.Message):
     if not GROUP_CHAT_ID:
         return
-
+    
     text = message.text or message.caption or ""
     text_lower = text.lower()
 
@@ -86,17 +79,17 @@ async def forward_to_group(message: types.Message):
         chat_id=GROUP_CHAT_ID,
         message_thread_id=target_thread
     )
-    
+
     MESSAGE_MAP[forwarded.message_id] = message.from_user.id
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def reply_from_group(message: types.Message):
     if not message.reply_to_message:
         return
-
+    
     reply_to_id = message.reply_to_message.message_id
     user_id = MESSAGE_MAP.get(reply_to_id)
-    
+
     if user_id:
         try:
             await bot.copy_message(
@@ -107,14 +100,38 @@ async def reply_from_group(message: types.Message):
         except Exception as e:
             logging.error(f"Не удалось отправить ответ пользователю: {e}")
 
+async def handle_webhook(request: web.Request):
+    url_token = request.match_info.get("token")
+    if url_token != TOKEN:
+        return web.Response(status=403)
+    
+    data = await request.json()
+    telegram_update = Update(**data)
+    await dp.feed_update(bot=bot, update=telegram_update)
+    return web.Response(status=200)
+
+async def handle_ping(request: web.Request):
+    return web.Response(text="Бот успешно работает через Webhooks!")
+
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(WEBHOOK_URL)
+    logging.info(f"Вебхук установлен на адрес: {WEBHOOK_URL}")
+
+    app = web.Application()
+    app.router.add_post(WEBHOOK_PATH, handle_webhook)
+    app.router.add_get("/", handle_ping)
+
+    port = int(os.environ.get("PORT", 10000))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
     
-    print("Бот запущен и держит порт...")
-    await asyncio.gather(
-        web_server(),
-        dp.start_polling(bot)
-    )
+    logging.info(f"Веб-сервер запущен на порту {port}")
+
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
