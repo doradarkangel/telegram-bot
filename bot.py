@@ -115,7 +115,7 @@ async def handle_ping(request: web.Request):
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(WEBHOOK_URL)
+    await bot.set_webhook(WEBHOOK_URL, allowed_updates=["message", "callback_query"])
     logging.info(f"Вебхук установлен на адрес: {WEBHOOK_URL}")
 
     app = web.Application()
