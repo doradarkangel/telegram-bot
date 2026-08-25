@@ -23,9 +23,9 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 MESSAGE_MAP = {}
+USER_LAST_TAG = {}  # <--- Добавили словарь для запоминания последнего тега пользователя
 
 WEBHOOK_PATH = f"/{TOKEN}"
-
 WEBHOOK_URL = f"https://telegram-bot-pr8q.onrender.com{WEBHOOK_PATH}"
 
 @dp.message(CommandStart())
@@ -57,7 +57,9 @@ async def forward_to_group(message: types.Message):
     
     text = message.text or message.caption or ""
     text_lower = text.lower()
+    user_id = message.from_user.id
 
+    target_thread = None
     if "#луна" in text_lower:
         target_thread = THREAD_LUNA
     elif "#люц" in text_lower:
@@ -72,15 +74,24 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_POHIT
     elif "#бусинка" in text_lower:
         target_thread = THREAD_BUSIN
-    else:
-        target_thread = THREAD_GENERAL
+
+    if not target_thread:
+        if message.sticker and user_id in USER_LAST_TAG:
+            target_thread = USER_LAST_TAG[user_id]
+        else:
+            if user_id in USER_LAST_TAG:
+                del USER_LAST_TAG[user_id]
+            target_thread = THREAD_GENERAL
+
+    if target_thread != THREAD_GENERAL:
+        USER_LAST_TAG[user_id] = target_thread
 
     forwarded = await message.forward(
         chat_id=GROUP_CHAT_ID,
         message_thread_id=target_thread
     )
 
-    MESSAGE_MAP[forwarded.message_id] = message.from_user.id
+    MESSAGE_MAP[forwarded.message_id] = user_id
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def reply_from_group(message: types.Message):
