@@ -76,7 +76,7 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_BUSIN
         
     if not target_thread:
-        if (message.sticker or message.voice) and user_id in USER_LAST_TAG:
+        if (message.sticker or message.voice or message.animation) and user_id in USER_LAST_TAG:
             target_thread = USER_LAST_TAG[user_id]
         else:
             if user_id in USER_LAST_TAG:
