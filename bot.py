@@ -89,6 +89,7 @@ async def reply_from_group(message: types.Message):
 
     text = message.text or message.caption or ""
     if text.startswith("/") or text.startswith("//"):
+        await message.reply("Error command.")
         return
 
     reply_to_id = message.reply_to_message.message_id
