@@ -86,7 +86,11 @@ async def forward_to_group(message: types.Message):
 async def reply_from_group(message: types.Message):
     if not message.reply_to_message:
         return
-    
+
+    text = message.text or message.caption or ""
+    if text.startswith("/") or text.startswith("//"):
+        return
+
     reply_to_id = message.reply_to_message.message_id
     user_id = MESSAGE_MAP.get(reply_to_id)
 
