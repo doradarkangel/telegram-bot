@@ -23,7 +23,7 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 MESSAGE_MAP = {}
-USER_LAST_TAG = {}  # <--- Добавили словарь для запоминания последнего тега пользователя
+USER_LAST_TAG = {} 
 
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"https://telegram-bot-pr8q.onrender.com{WEBHOOK_PATH}"
@@ -74,9 +74,9 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_POHIT
     elif "#бусинка" in text_lower:
         target_thread = THREAD_BUSIN
-
+        
     if not target_thread:
-        if message.sticker and user_id in USER_LAST_TAG:
+        if (message.sticker or message.voice) and user_id in USER_LAST_TAG:
             target_thread = USER_LAST_TAG[user_id]
         else:
             if user_id in USER_LAST_TAG:
