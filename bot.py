@@ -3,7 +3,7 @@ import logging
 import asyncio
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import Update
 
 TOKEN = "8866396965:AAET0Ra7IFCjx5Yspm4xYH5ujEPUjyGMggM"
@@ -22,7 +22,8 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 MESSAGE_MAP = {}
-USER_LAST_TAG = {} 
+USER_LAST_TAG = {}
+BANNED_USERS = set()
 
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"https://telegram-bot-pr8q.onrender.com{WEBHOOK_PATH}"
@@ -33,18 +34,18 @@ async def start_handler(message: types.Message):
 
 ❕Правила ❕
 
-1. Не просите у админов личные данные - юз, имя, возраст, город и т. д.
+1. Не просите у админов личные данные - юз, имя, возраст, город и т. д.
 Админы могут сообщать ту информацию что пожелают нужной, на вытягивайте ее из них. 
 
 2. Обязательно отмечайте своего админа.
 Чтобы ваше сообщение точно не потерялось, всегда ставьте тег нужного админа. Без тега сообщение может остаться без внимания так как у нас ветки в боте!
 
-3. Админы - такие же люди: у них есть личное время и потребность в отдыхе. Если вы написали ночью и не получили ответа сразу, не стоит жаловаться.
+3. Админы - такие же люди: у них есть личное время и потребность в отдыхе. Если вы написали ночью и не получили ответа сразу, не стоит жаловаться.
 
 4. Меняйте админа разумно.
 Без веской причины менять ответственного админа нельзя. Вы можете сменить админа только 3 раза , затем выбирайте из тех что вас взяли, либо в конечном итоге будет - бан.
 
-5. Если ваш админ не отвечает - пожалуйста, подождите: возможно, он занят или взял перерыв. Если администратор ушёл в рест (отпуск), дождитесь его возвращения либо в рамках разумного смените ответственного. Помните: администрации тоже нужен отдых.
+5. Если ваш админ не отвечает - пожалуйста, подождите: возможно, он занят или взял перерыв. Если администратор ушёл в рест (отпуск), дождитесь его возвращения либо в рамках разумного смените ответственного. Помните: администрации тоже нужен отдых.
 
 Всю информацию о админах и изменениях - мы публикуем в нашем тгк : https://t.me/devilspalac"""
     await message.answer(welcome_text)
@@ -54,9 +55,14 @@ async def forward_to_group(message: types.Message):
     if not GROUP_CHAT_ID:
         return
     
+    user_id = message.from_user.id
+
+    if user_id in BANNED_USERS:
+        await message.answer("Вы забанены администратором.")
+        return  
+    
     text = message.text or message.caption or ""
     text_lower = text.lower()
-    user_id = message.from_user.id
 
     target_thread = None
     if "#луна" in text_lower:
@@ -71,9 +77,9 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_POHIT
     elif "#бусинка" in text_lower:
         target_thread = THREAD_BUSIN
-        
+
     if not target_thread:
-        if (message.sticker or message.voice or message.animation) and user_id in USER_LAST_TAG:
+        if (message.sticker or message.voice or message.animation or message.video_note) and user_id in USER_LAST_TAG:
             target_thread = USER_LAST_TAG[user_id]
         else:
             if user_id in USER_LAST_TAG:
@@ -92,12 +98,31 @@ async def forward_to_group(message: types.Message):
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def reply_from_group(message: types.Message):
-    if not message.reply_to_message:
+    text = message.text or message.caption or ""
+    
+    if text.startswith("/") or text.startswith("//"):
+        if text.startswith("/broadcast") or text.startswith("/bc"):
+            await handle_broadcast(message)
+            return
+        elif text.startswith("/ban"):
+            await handle_ban(message)
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            return
+        elif text.startswith("/unban"):
+            await handle_unban(message)
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            return
+            
+        await message.reply("Error command.")
         return
 
-    text = message.text or message.caption or ""
-    if text.startswith("/") or text.startswith("//"):
-        await message.reply("Error command.")
+    if not message.reply_to_message:
         return
 
     reply_to_id = message.reply_to_message.message_id
@@ -112,6 +137,64 @@ async def reply_from_group(message: types.Message):
             )
         except Exception as e:
             logging.error(f"Не удалось отправить ответ пользователю: {e}")
+
+async def handle_ban(message: types.Message):
+    if not message.reply_to_message:
+        await message.reply("⚠️ Сделай Reply (ответ) на сообщение пользователя, которого хочешь забанить, и напиши `/ban`")
+        return
+
+    reply_to_id = message.reply_to_message.message_id
+    user_id = MESSAGE_MAP.get(reply_to_id)
+
+    if not user_id:
+        await message.reply("❌ Не удалось найти пользователя по этому сообщению.")
+        return
+
+    BANNED_USERS.add(user_id)
+    USER_LAST_TAG.pop(user_id, None)
+    
+    await message.reply(f"🚫 Пользователь (ID: `{user_id}`) забанен в боте.")
+
+async def handle_unban(message: types.Message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply("⚠️ Укажи ID пользователя для разбана, например:\n`/unban 123456789`")
+        return
+
+    try:
+        user_id = int(parts[1])
+    except ValueError:
+        await message.reply("❌ Неверный формат ID.")
+        return
+
+    if user_id in BANNED_USERS:
+        BANNED_USERS.remove(user_id)
+        await message.reply(f"✅ Пользователь (ID: `{user_id}`) разбанен.")
+    else:
+        await message.reply("ℹ️ Этот пользователь не найден в списке забаненных.")
+
+async def handle_broadcast(message: types.Message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply("⚠️ Напиши текст для рассылки после команды, например:\n`/bc Всем привет!`")
+        return
+
+    broadcast_text = parts[1]
+    
+    all_users = list((set(USER_LAST_TAG.keys()) | set(MESSAGE_MAP.values())) - BANNED_USERS)
+    
+    if not all_users:
+        await message.reply("❌ Нет пользователей для рассылки.")
+        return
+
+    for uid in all_users:
+        try:
+            await bot.send_message(chat_id=uid, text=broadcast_text)
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            logging.error(f"Не удалось отправить рассылку юзеру {uid}: {e}")
+
+    await message.reply("✅ Рассылка завершена.")
 
 async def handle_webhook(request: web.Request):
     try:
