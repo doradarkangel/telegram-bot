@@ -13,7 +13,6 @@ THREAD_LUNA = 28531
 THREAD_LYUT = 28530
 THREAD_GENERAL = 28553
 THREAD_RUSY = 28533
-THREAD_USHAST = 28536
 THREAD_MELKA = 28537
 THREAD_POHIT = 28538
 THREAD_BUSIN = 28539
@@ -66,8 +65,6 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_LYUT
     elif "#русый" in text_lower:
         target_thread = THREAD_RUSY
-    elif "#ушастая" in text_lower:
-        target_thread = THREAD_USHAST
     elif "#мелкая" in text_lower:
         target_thread = THREAD_MELKA
     elif "#похититель" in text_lower:
