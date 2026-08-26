@@ -23,7 +23,31 @@ dp = Dispatcher()
 
 MESSAGE_MAP = {}
 USER_LAST_TAG = {}
-BANNED_USERS = set()
+
+# Файл для постоянного хранения забаненных ID
+BANNED_FILE = "banned.txt"
+
+def load_banned_users():
+    """Загружает список забаненных из файла при запуске бота"""
+    if os.path.exists(BANNED_FILE):
+        try:
+            with open(BANNED_FILE, "r") as f:
+                return set(int(line.strip()) for line in f if line.strip().isdigit())
+        except Exception as e:
+            logging.error(f"Ошибка загрузки файла банов: {e}")
+    return set()
+
+def save_banned_users(banned_set):
+    """Сохраняет актуальный список забаненных в файл"""
+    try:
+        with open(BANNED_FILE, "w") as f:
+            for uid in banned_set:
+                f.write(f"{uid}\n")
+    except Exception as e:
+        logging.error(f"Ошибка сохранения файла банов: {e}")
+
+# Загружаем баны при старте бота
+BANNED_USERS = load_banned_users()
 
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"https://telegram-bot-pr8q.onrender.com{WEBHOOK_PATH}"
@@ -58,7 +82,7 @@ async def forward_to_group(message: types.Message):
     user_id = message.from_user.id
 
     if user_id in BANNED_USERS:
-        await message.answer("Вы забанены администратором.")
+        await message.answer("Вы забанены администратором")
         return  
     
     text = message.text or message.caption or ""
@@ -151,12 +175,12 @@ async def handle_ban(message: types.Message):
         return
 
     BANNED_USERS.add(user_id)
+    save_banned_users(BANNED_USERS)
     USER_LAST_TAG.pop(user_id, None)
     
     await message.reply(f"🚫 Пользователь (ID: `{user_id}`) забанен в боте.")
 
 async def handle_unban(message: types.Message):
-    """Команда /unban в ответ на пересланное сообщение пользователя"""
     if not message.reply_to_message:
         await message.reply("⚠️ Сделай Reply (ответ) на сообщение пользователя, которого хочешь разбанить, и напиши `/unban`")
         return
@@ -170,6 +194,7 @@ async def handle_unban(message: types.Message):
 
     if user_id in BANNED_USERS:
         BANNED_USERS.remove(user_id)
+        save_banned_users(BANNED_USERS)
         await message.reply(f"✅ Пользователь (ID: `{user_id}`) разбанен.")
     else:
         await message.reply("ℹ️ Этот пользователь не находится в списке забаненных.")
