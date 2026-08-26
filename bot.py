@@ -156,22 +156,23 @@ async def handle_ban(message: types.Message):
     await message.reply(f"🚫 Пользователь (ID: `{user_id}`) забанен в боте.")
 
 async def handle_unban(message: types.Message):
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.reply("⚠️ Укажи ID пользователя для разбана, например:\n`/unban 123456789`")
+    """Команда /unban в ответ на пересланное сообщение пользователя"""
+    if not message.reply_to_message:
+        await message.reply("⚠️ Сделай Reply (ответ) на сообщение пользователя, которого хочешь разбанить, и напиши `/unban`")
         return
 
-    try:
-        user_id = int(parts[1])
-    except ValueError:
-        await message.reply("❌ Неверный формат ID.")
+    reply_to_id = message.reply_to_message.message_id
+    user_id = MESSAGE_MAP.get(reply_to_id)
+
+    if not user_id:
+        await message.reply("❌ Не удалось найти пользователя по этому сообщению.")
         return
 
     if user_id in BANNED_USERS:
         BANNED_USERS.remove(user_id)
         await message.reply(f"✅ Пользователь (ID: `{user_id}`) разбанен.")
     else:
-        await message.reply("ℹ️ Этот пользователь не найден в списке забаненных.")
+        await message.reply("ℹ️ Этот пользователь не находится в списке забаненных.")
 
 async def handle_broadcast(message: types.Message):
     parts = message.text.split(maxsplit=1)
