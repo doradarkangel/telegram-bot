@@ -17,6 +17,7 @@ THREAD_MELKA = 28537
 THREAD_POHIT = 28538
 THREAD_BUSIN = 28539
 THREAD_LILIT = 42176
+THREAD_SIGA = 43559
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -104,6 +105,8 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_BUSIN
     elif "#лилит" in text_lower:
         target_thread = THREAD_LILIT
+    elif "пушистый" in text_lower:
+        target_thread = THREAD_SIGA
 
     if not target_thread:
         if (message.sticker or message.voice or message.animation or message.video_note) and user_id in USER_LAST_TAG:
