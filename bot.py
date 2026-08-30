@@ -130,10 +130,9 @@ async def forward_to_group(message: types.Message):
 async def reply_from_group(message: types.Message):
     text = message.text or message.caption or ""
     
-    if text.startswith("/") or text.startswith("//"):
-        if text.startswith("/broadcast") or text.startswith("/bc"):
+    if text.startswith("/") or text.startswith("//") or (message.caption and message.caption.startswith("/")):
+        if text.startswith("/broadcast") or text.startswith("/bc") or (message.caption and (message.caption.startswith("/bc") or message.caption.startswith("/broadcast"))):
             await handle_broadcast(message)
-            return
         elif text.startswith("/ban"):
             await handle_ban(message)
             try:
@@ -206,7 +205,8 @@ async def handle_unban(message: types.Message):
         await message.reply("ℹ️ Этот пользователь не находится в списке забаненных.")
 
 async def handle_broadcast(message: types.Message):
-    parts = message.text.split(maxsplit=1)
+    text_to_send = message.text or message.caption or ""
+    parts = text_to_send.split(maxsplit=1)
     if len(parts) < 2:
         await message.reply("⚠️ Напиши текст для рассылки после команды, например:\n`/bc Всем привет!`")
         return
