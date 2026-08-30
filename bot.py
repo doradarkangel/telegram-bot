@@ -130,12 +130,14 @@ async def forward_to_group(message: types.Message):
 async def reply_from_group(message: types.Message):
     text = message.text or message.caption or ""
     
-    # ПЕРВЫМ ДЕЛОМ проверяем команды, чтобы они не перехватывались как обычные реплаи
+    # 1. Рассылка проверяется самой первой, чтобы реплаи её не перехватывали
+    if text.startswith("/broadcast") or text.startswith("/bc") or (message.caption and (message.caption.startswith("/bc") or message.caption.startswith("/broadcast"))):
+        await handle_broadcast(message)
+        return
+
+    # 2. Проверка остальных команд
     if text.startswith("/") or text.startswith("//") or (message.caption and message.caption.startswith("/")):
-        if text.startswith("/broadcast") or text.startswith("/bc") or (message.caption and (message.caption.startswith("/bc") or message.caption.startswith("/broadcast"))):
-            await handle_broadcast(message)
-            return
-        elif text.startswith("/ban"):
+        if text.startswith("/ban"):
             await handle_ban(message)
             try:
                 await message.delete()
@@ -153,6 +155,7 @@ async def reply_from_group(message: types.Message):
         await message.reply("Error command.")
         return
 
+    # 3. Обычный ответ на сообщение пользователя в ветке
     if not message.reply_to_message:
         return
 
