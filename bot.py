@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Update
 
-TOKEN = "8866396965:AAET0Ra7IFCjx5Yspm4xYH5ujEPUjyGMggM"
+TOKEN = os.getenv("BOT_TOKEN")
 GROUP_CHAT_ID = -1003959716659
 
 THREAD_LUNA = 28531
