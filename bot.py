@@ -130,9 +130,11 @@ async def forward_to_group(message: types.Message):
 async def reply_from_group(message: types.Message):
     text = message.text or message.caption or ""
     
+    # ПЕРВЫМ ДЕЛОМ проверяем команды, чтобы они не перехватывались как обычные реплаи
     if text.startswith("/") or text.startswith("//") or (message.caption and message.caption.startswith("/")):
         if text.startswith("/broadcast") or text.startswith("/bc") or (message.caption and (message.caption.startswith("/bc") or message.caption.startswith("/broadcast"))):
             await handle_broadcast(message)
+            return
         elif text.startswith("/ban"):
             await handle_ban(message)
             try:
@@ -206,13 +208,15 @@ async def handle_unban(message: types.Message):
 
 async def handle_broadcast(message: types.Message):
     text_to_send = message.text or message.caption or ""
-    parts = text_to_send.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.reply("⚠️ Напиши текст для рассылки после команды, например:\n`/bc Всем привет!`")
-        return
-
-    broadcast_text = parts[1]
     
+    # Аккуратно вырезаем саму команду (/bc или /broadcast) из текста/подписи
+    broadcast_text = text_to_send
+    for prefix in ["/broadcast", "/bc"]:
+        if broadcast_text.startswith(prefix):
+            broadcast_text = broadcast_text[len(prefix):].lstrip()
+            break
+
+    # Собираем всех уникальных пользователей, исключая забаненных
     all_users = list((set(USER_LAST_TAG.keys()) | set(MESSAGE_MAP.values())) - BANNED_USERS)
     
     if not all_users:
@@ -221,7 +225,17 @@ async def handle_broadcast(message: types.Message):
 
     for uid in all_users:
         try:
-            await bot.send_message(chat_id=uid, text=broadcast_text)
+            # Если рассылка идет с картинкой, видео или анимацией — копируем медиа с новым текстом
+            if message.photo or message.video or message.animation or message.document or message.sticker:
+                await bot.copy_message(
+                    chat_id=uid,
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id,
+                    caption=broadcast_text if broadcast_text else message.caption
+                )
+            else:
+                await bot.send_message(chat_id=uid, text=broadcast_text)
+            
             await asyncio.sleep(0.05)
         except Exception as e:
             logging.error(f"Не удалось отправить рассылку юзеру {uid}: {e}")
@@ -258,6 +272,7 @@ async def main():
     
     logging.info(f"Веб-сервер запущен на порту {port}")
 
+    async def main():
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
