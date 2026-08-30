@@ -129,22 +129,23 @@ async def forward_to_group(message: types.Message):
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def reply_from_group(message: types.Message):
     text = message.text or message.caption or ""
+    clean_text = text.strip()
     
-    # 1. Рассылка проверяется самой первой, чтобы реплаи её не перехватывали
-    if text.startswith("/broadcast") or text.startswith("/bc") or (message.caption and (message.caption.startswith("/bc") or message.caption.startswith("/broadcast"))):
+    # 1. Универсальная и надежная проверка на рассылку
+    if clean_text.startswith("/bc") or clean_text.startswith("/broadcast"):
         await handle_broadcast(message)
         return
 
     # 2. Проверка остальных команд
-    if text.startswith("/") or text.startswith("//") or (message.caption and message.caption.startswith("/")):
-        if text.startswith("/ban"):
+    if clean_text.startswith("/") or clean_text.startswith("//"):
+        if clean_text.startswith("/ban"):
             await handle_ban(message)
             try:
                 await message.delete()
             except Exception:
                 pass
             return
-        elif text.startswith("/unban"):
+        elif clean_text.startswith("/unban"):
             await handle_unban(message)
             try:
                 await message.delete()
@@ -213,7 +214,7 @@ async def handle_broadcast(message: types.Message):
     text_to_send = message.text or message.caption or ""
     
     # Аккуратно вырезаем саму команду (/bc или /broadcast) из текста/подписи
-    broadcast_text = text_to_send
+    broadcast_text = text_to_send.strip()
     for prefix in ["/broadcast", "/bc"]:
         if broadcast_text.startswith(prefix):
             broadcast_text = broadcast_text[len(prefix):].lstrip()
