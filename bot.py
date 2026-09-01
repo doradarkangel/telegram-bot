@@ -108,14 +108,15 @@ async def forward_to_group(message: types.Message):
     elif "пушистый" in text_lower:
         target_thread = THREAD_SIGA
 
+    # Если в сообщении нет нового тега, но пользователь уже писал кому-то ранее — используем прошлый тег
+    if not target_thread and user_id in USER_LAST_TAG:
+        target_thread = USER_LAST_TAG[user_id]
+    
+    # Если тега нет вообще нигде, отправляем в общий чат
     if not target_thread:
-        if (message.sticker or message.voice or message.animation or message.video_note) and user_id in USER_LAST_TAG:
-            target_thread = USER_LAST_TAG[user_id]
-        else:
-            if user_id in USER_LAST_TAG:
-                del USER_LAST_TAG[user_id]
-            target_thread = THREAD_GENERAL
+        target_thread = THREAD_GENERAL
 
+    # Запоминаем текущую ветку для пользователя
     if target_thread != THREAD_GENERAL:
         USER_LAST_TAG[user_id] = target_thread
 
@@ -131,7 +132,7 @@ async def reply_from_group(message: types.Message):
     text = message.text or message.caption or ""
     clean_text = text.strip()
     
-    # 1. Универсальная и надежная проверка на рассылку
+    # 1. Проверка на рассылку
     if clean_text.startswith("/bc") or clean_text.startswith("/broadcast"):
         await handle_broadcast(message)
         return
@@ -213,14 +214,12 @@ async def handle_unban(message: types.Message):
 async def handle_broadcast(message: types.Message):
     text_to_send = message.text or message.caption or ""
     
-    # Аккуратно вырезаем саму команду (/bc или /broadcast) из текста/подписи
     broadcast_text = text_to_send.strip()
     for prefix in ["/broadcast", "/bc"]:
         if broadcast_text.startswith(prefix):
             broadcast_text = broadcast_text[len(prefix):].lstrip()
             break
 
-    # Собираем всех уникальных пользователей, исключая забаненных
     all_users = list((set(USER_LAST_TAG.keys()) | set(MESSAGE_MAP.values())) - BANNED_USERS)
     
     if not all_users:
@@ -229,7 +228,6 @@ async def handle_broadcast(message: types.Message):
 
     for uid in all_users:
         try:
-            # Если рассылка идет с картинкой, видео или анимацией — копируем медиа с новым текстом
             if message.photo or message.video or message.animation or message.document or message.sticker:
                 await bot.copy_message(
                     chat_id=uid,
