@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import asyncio
 from aiohttp import web
@@ -24,11 +25,10 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-MESSAGE_MAP = {}
-USER_LAST_TAG = {}
-
-# Файл для постоянного хранения забаненных ID
+# Файлы для постоянного хранения данных на диске
 BANNED_FILE = "banned.txt"
+MAP_FILE = "message_map.json"
+TAGS_FILE = "user_tags.json"
 
 def load_banned_users():
     """Загружает список забаненных из файла при запуске бота"""
@@ -49,8 +49,31 @@ def save_banned_users(banned_set):
     except Exception as e:
         logging.error(f"Ошибка сохранения файла банов: {e}")
 
-# Загружаем баны при старте бота
+def load_json_file(filename):
+    """Универсальная загрузка словарей из JSON"""
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # JSON сохраняет ключи как строки, конвертируем их обратно в целые числа (int)
+                return {int(k): v for k, v in data.items()}
+        except Exception as e:
+            logging.error(f"Ошибка загрузки {filename}: {e}")
+    return {}
+
+def save_json_file(filename, data):
+    """Универсальное сохранение словарей в JSON"""
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logging.error(f"Ошибка сохранения {filename}: {e}")
+
+# Загружаем данные при старте бота
 BANNED_USERS = load_banned_users()
+# Загружаем историю маппинга сообщений и тегов с диска
+MESSAGE_MAP = load_json_file(MAP_FILE)
+USER_LAST_TAG = load_json_file(TAGS_FILE)
 
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"https://telegram-bot-pr8q.onrender.com{WEBHOOK_PATH}"
@@ -119,16 +142,22 @@ async def forward_to_group(message: types.Message):
     if not target_thread:
         target_thread = THREAD_GENERAL
 
-    # Запоминаем текущую ветку для пользователя
+    # Запоминаем текущую ветку для пользователя и сразу сохраняем на диск
     if target_thread != THREAD_GENERAL:
         USER_LAST_TAG[user_id] = target_thread
+        save_json_file(TAGS_FILE, USER_LAST_TAG)
 
-    forwarded = await message.forward(
-        chat_id=GROUP_CHAT_ID,
-        message_thread_id=target_thread
-    )
-
-    MESSAGE_MAP[forwarded.message_id] = user_id
+    try:
+        forwarded = await message.forward(
+            chat_id=GROUP_CHAT_ID,
+            message_thread_id=target_thread
+        )
+        # Сохраняем связку ID сообщения в группе с ID юзера и записываем на диск
+        MESSAGE_MAP[forwarded.message_id] = user_id
+        save_json_file(MAP_FILE, MESSAGE_MAP)
+    except Exception as e:
+        logging.error(f"ОШИБКА ПЕРЕСЫЛКИ: юзер {user_id}, ветка {target_thread}, ошибка: {e}")
+        await message.answer("⚠️ Не удалось доставить сообщение администраторам. Возможно, выбранная ветка повреждена или удалена, попробуйте написать с другим тегом.")
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def reply_from_group(message: types.Message):
@@ -192,6 +221,7 @@ async def handle_ban(message: types.Message):
     BANNED_USERS.add(user_id)
     save_banned_users(BANNED_USERS)
     USER_LAST_TAG.pop(user_id, None)
+    save_json_file(TAGS_FILE, USER_LAST_TAG)
     
     await message.reply(f"🚫 Пользователь (ID: `{user_id}`) забанен в боте.")
 
@@ -243,7 +273,7 @@ async def handle_broadcast(message: types.Message):
             
             await asyncio.sleep(0.05)
         except Exception as e:
-            logging.error(f"Не удалось отправить рассылку юзеру {uid}: {e}")
+            logging.error(f"Не удалось отправить рассылку юзерu {uid}: {e}")
 
     await message.reply("✅ Рассылка завершена.")
 
