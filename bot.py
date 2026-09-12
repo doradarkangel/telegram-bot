@@ -96,7 +96,7 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_LUNA
     elif "#люц" in text_lower:
         target_thread = THREAD_LYUT
-    elif "#русый" in text_lower:
+    elif "#аид" in text_lower:
         target_thread = THREAD_RUSY
     elif "#мелкая" in text_lower:
         target_thread = THREAD_MELKA
