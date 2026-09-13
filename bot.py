@@ -1,13 +1,14 @@
 import os
-import json
 import logging
 import asyncio
+import asyncpg
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Update
 
 TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 GROUP_CHAT_ID = -1003959716659
 
 THREAD_LUNA = 28531
@@ -20,18 +21,19 @@ THREAD_BUSIN = 28539
 THREAD_LILIT = 42176
 THREAD_SIGA = 43559
 THREAD_NESSA = 80703
+THREAD_FENIX = 104708
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Файлы для постоянного хранения данных на диске
+# Глобальный пул подключений к БД
+db_pool = None
+
+# Файл для локального хранения только забаненных (или можно тоже в БД, но banned.txt обычно достаточно)
 BANNED_FILE = "banned.txt"
-MAP_FILE = "message_map.json"
-TAGS_FILE = "user_tags.json"
 
 def load_banned_users():
-    """Загружает список забаненных из файла при запуске бота"""
     if os.path.exists(BANNED_FILE):
         try:
             with open(BANNED_FILE, "r") as f:
@@ -41,7 +43,6 @@ def load_banned_users():
     return set()
 
 def save_banned_users(banned_set):
-    """Сохраняет актуальный список забаненных в файл"""
     try:
         with open(BANNED_FILE, "w") as f:
             for uid in banned_set:
@@ -49,34 +50,70 @@ def save_banned_users(banned_set):
     except Exception as e:
         logging.error(f"Ошибка сохранения файла банов: {e}")
 
-def load_json_file(filename):
-    """Универсальная загрузка словарей из JSON"""
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                # JSON сохраняет ключи как строки, конвертируем их обратно в целые числа (int)
-                return {int(k): v for k, v in data.items()}
-        except Exception as e:
-            logging.error(f"Ошибка загрузки {filename}: {e}")
-    return {}
-
-def save_json_file(filename, data):
-    """Универсальное сохранение словарей в JSON"""
-    try:
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        logging.error(f"Ошибка сохранения {filename}: {e}")
-
-# Загружаем данные при старте бота
 BANNED_USERS = load_banned_users()
-# Загружаем историю маппинга сообщений и тегов с диска
-MESSAGE_MAP = load_json_file(MAP_FILE)
-USER_LAST_TAG = load_json_file(TAGS_FILE)
 
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"https://telegram-bot-pr8q.onrender.com{WEBHOOK_PATH}"
+
+# --- Функции работы с базой данных ---
+async def init_db():
+    global db_pool
+    if DATABASE_URL:
+        try:
+            db_pool = await asyncpg.create_pool(DATABASE_URL)
+            logging.info("Успешное подключение к облачной базе данных!")
+        except Exception as e:
+            logging.error(f"Ошибка подключения к БД: {e}")
+
+async def get_user_last_tag(user_id: int):
+    if not db_pool:
+        return None
+    async with db_pool.acquire() as connection:
+        row = await connection.fetchrow("SELECT target_thread FROM user_tags WHERE user_id = $1", user_id)
+        return row["target_thread"] if row else None
+
+async def save_user_last_tag(user_id: int, thread_id: int):
+    if not db_pool:
+        return
+    async with db_pool.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO user_tags (user_id, target_thread) 
+            VALUES ($1, $2) 
+            ON CONFLICT (user_id) 
+            DO UPDATE SET target_thread = $2
+            """,
+            user_id, thread_id
+        )
+
+async def get_user_by_message(forwarded_msg_id: int):
+    if not db_pool:
+        return None
+    async with db_pool.acquire() as connection:
+        row = await connection.fetchrow("SELECT user_id FROM message_map WHERE forwarded_message_id = $1", forwarded_msg_id)
+        return row["user_id"] if row else None
+
+async def save_message_mapping(forwarded_msg_id: int, user_id: int):
+    if not db_pool:
+        return
+    async with db_pool.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO message_map (forwarded_message_id, user_id) 
+            VALUES ($1, $2) 
+            ON CONFLICT (forwarded_message_id) 
+            DO UPDATE SET user_id = $2
+            """,
+            forwarded_msg_id, user_id
+        )
+
+async def get_all_users_for_broadcast():
+    if not db_pool:
+        return []
+    async with db_pool.acquire() as connection:
+        rows = await connection.fetch("SELECT user_id FROM user_tags UNION SELECT user_id FROM message_map")
+        return [row["user_id"] for row in rows]
+# -------------------------------------
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
@@ -133,28 +170,28 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_SIGA
     elif "#макима" in text_lower:
         target_thread = THREAD_NESSA
+    elif "#феникс" in text_lower:
+        target_thread = THREAD_FENIX
 
-    # Если в сообщении нет нового тега, но пользователь уже писал кому-то ранее — используем прошлый тег
-    if not target_thread and user_id in USER_LAST_TAG:
-        target_thread = USER_LAST_TAG[user_id]
+    # Проверяем прошлый тег из базы данных, если в текущем сообщении тега нет
+    if not target_thread:
+        target_thread = await get_user_last_tag(user_id)
     
     # Если тега нет вообще нигде, отправляем в общий чат
     if not target_thread:
         target_thread = THREAD_GENERAL
 
-    # Запоминаем текущую ветку для пользователя и сразу сохраняем на диск
+    # Сохраняем актуальный тег в базу
     if target_thread != THREAD_GENERAL:
-        USER_LAST_TAG[user_id] = target_thread
-        save_json_file(TAGS_FILE, USER_LAST_TAG)
+        await save_user_last_tag(user_id, target_thread)
 
     try:
         forwarded = await message.forward(
             chat_id=GROUP_CHAT_ID,
             message_thread_id=target_thread
         )
-        # Сохраняем связку ID сообщения в группе с ID юзера и записываем на диск
-        MESSAGE_MAP[forwarded.message_id] = user_id
-        save_json_file(MAP_FILE, MESSAGE_MAP)
+        # Сохраняем связку сообщения в облачную базу
+        await save_message_mapping(forwarded.message_id, user_id)
     except Exception as e:
         logging.error(f"ОШИБКА ПЕРЕСЫЛКИ: юзер {user_id}, ветка {target_thread}, ошибка: {e}")
         await message.answer("⚠️ Не удалось доставить сообщение администраторам. Возможно, выбранная ветка повреждена или удалена, попробуйте написать с другим тегом.")
@@ -164,12 +201,10 @@ async def reply_from_group(message: types.Message):
     text = message.text or message.caption or ""
     clean_text = text.strip()
     
-    # 1. Проверка на рассылку
     if clean_text.startswith("/bc") or clean_text.startswith("/broadcast"):
         await handle_broadcast(message)
         return
 
-    # 2. Проверка остальных команд
     if clean_text.startswith("/") or clean_text.startswith("//"):
         if clean_text.startswith("/ban"):
             await handle_ban(message)
@@ -189,12 +224,12 @@ async def reply_from_group(message: types.Message):
         await message.reply("Error command.")
         return
 
-    # 3. Обычный ответ на сообщение пользователя в ветке
     if not message.reply_to_message:
         return
 
     reply_to_id = message.reply_to_message.message_id
-    user_id = MESSAGE_MAP.get(reply_to_id)
+    # Получаем ID пользователя из облачной базы по ID сообщения в группе
+    user_id = await get_user_by_message(reply_to_id)
 
     if user_id:
         try:
@@ -212,7 +247,7 @@ async def handle_ban(message: types.Message):
         return
 
     reply_to_id = message.reply_to_message.message_id
-    user_id = MESSAGE_MAP.get(reply_to_id)
+    user_id = await get_user_by_message(reply_to_id)
 
     if not user_id:
         await message.reply("❌ Не удалось найти пользователя по этому сообщению.")
@@ -220,8 +255,6 @@ async def handle_ban(message: types.Message):
 
     BANNED_USERS.add(user_id)
     save_banned_users(BANNED_USERS)
-    USER_LAST_TAG.pop(user_id, None)
-    save_json_file(TAGS_FILE, USER_LAST_TAG)
     
     await message.reply(f"🚫 Пользователь (ID: `{user_id}`) забанен в боте.")
 
@@ -231,7 +264,7 @@ async def handle_unban(message: types.Message):
         return
 
     reply_to_id = message.reply_to_message.message_id
-    user_id = MESSAGE_MAP.get(reply_to_id)
+    user_id = await get_user_by_message(reply_to_id)
 
     if not user_id:
         await message.reply("❌ Не удалось найти пользователя по этому сообщению.")
@@ -253,7 +286,8 @@ async def handle_broadcast(message: types.Message):
             broadcast_text = broadcast_text[len(prefix):].lstrip()
             break
 
-    all_users = list((set(USER_LAST_TAG.keys()) | set(MESSAGE_MAP.values())) - BANNED_USERS)
+    db_users = await get_all_users_for_broadcast()
+    all_users = list(set(db_users) - BANNED_USERS)
     
     if not all_users:
         await message.reply("❌ Нет пользователей для рассылки.")
@@ -273,7 +307,7 @@ async def handle_broadcast(message: types.Message):
             
             await asyncio.sleep(0.05)
         except Exception as e:
-            logging.error(f"Не удалось отправить рассылку юзерu {uid}: {e}")
+            logging.error(f"Не удалось отправить рассылку юзеру {uid}: {e}")
 
     await message.reply("✅ Рассылка завершена.")
 
@@ -291,6 +325,9 @@ async def handle_ping(request: web.Request):
     return web.Response(text="Бот успешно работает через Webhooks!")
 
 async def main():
+    # Инициализируем подключение к базе данных при старте
+    await init_db()
+
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(WEBHOOK_URL, allowed_updates=["message", "callback_query"])
     logging.info(f"Вебхук установлен на адрес: {WEBHOOK_URL}")
