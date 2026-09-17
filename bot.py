@@ -21,7 +21,6 @@ THREAD_BUSIN = 28539
 THREAD_LILIT = 42176
 THREAD_SIGA = 43559
 THREAD_NESSA = 80703
-THREAD_FENIX = 104708
 THREAD_DANTON = 108032
 THREAD_POLNOCH = 120660
 THREAD_RAYZER = 116418
@@ -173,8 +172,6 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_SIGA
     elif "#макима" in text_lower:
         target_thread = THREAD_NESSA
-    elif "#феникс" in text_lower:
-        target_thread = THREAD_FENIX
     elif "#дантон" in text_lower:
         target_thread = THREAD_DANTON
     elif "#полночь" in text_lower:
