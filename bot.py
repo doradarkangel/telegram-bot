@@ -23,7 +23,7 @@ THREAD_SIGA = 43559
 THREAD_NESSA = 80703
 THREAD_POLNOCH = 120660
 THREAD_RAYZER = 116418
-THREAD_GOLUB = 136937
+THREAD_ANGELSK = 140213
 THREAD_SMERTN = 136939
 
 logging.basicConfig(level=logging.INFO)
@@ -172,8 +172,8 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_POLNOCH
     elif "#рейзер" in text_lower:
         target_thread = THREAD_RAYZER
-    elif "#голубь" in text_lower:
-        target_thread = THREAD_GOLUB
+    elif "#ангельская" in text_lower:
+        target_thread = THREAD_ANGELSK
     elif "#смертная" in text_lower:
         target_thread = THREAD_SMERTN
 
