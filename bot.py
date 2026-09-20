@@ -21,9 +21,10 @@ THREAD_BUSIN = 28539
 THREAD_LILIT = 42176
 THREAD_SIGA = 43559
 THREAD_NESSA = 80703
-THREAD_DANTON = 108032
 THREAD_POLNOCH = 120660
 THREAD_RAYZER = 116418
+THREAD_GOLUB = 136937
+THREAD_SMERTN = 136939
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -172,12 +173,14 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_SIGA
     elif "#макима" in text_lower:
         target_thread = THREAD_NESSA
-    elif "#дантон" in text_lower:
-        target_thread = THREAD_DANTON
     elif "#полночь" in text_lower:
         target_thread = THREAD_POLNOCH
     elif "#рейзер" in text_lower:
         target_thread = THREAD_RAYZER
+    elif "#голубь" in text_lower:
+        target_thread = THREAD_GOLUB
+    elif "#смертная" in text_lower:
+        target_thread = THREAD_SMERTN
 
     # Проверяем прошлый тег из базы данных, если в текущем сообщении тега нет
     if not target_thread:
