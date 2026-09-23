@@ -15,8 +15,6 @@ THREAD_LUNA = 28531
 THREAD_LYUT = 28530
 THREAD_GENERAL = 28553
 THREAD_RUSY = 28533
-THREAD_MELKA = 28537
-THREAD_POHIT = 28538
 THREAD_BUSIN = 28539
 THREAD_LILIT = 42176
 THREAD_SIGA = 43559
@@ -155,10 +153,6 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_LYUT
     elif "#аид" in text_lower:
         target_thread = THREAD_RUSY
-    elif "#мелкая" in text_lower:
-        target_thread = THREAD_MELKA
-    elif "#похититель" in text_lower:
-        target_thread = THREAD_POHIT
     elif "#бусинка" in text_lower:
         target_thread = THREAD_BUSIN
     elif "#лилит" in text_lower:
@@ -248,7 +242,11 @@ async def reply_from_group(message: types.Message):
                 message_id=message.message_id
             )
         except Exception as e:
-            logging.error(f"Не удалось отправить ответ пользователю: {e}")
+            err_str = str(e).lower()
+            if "blocked" in err_str or "deactivated" in err_str or "forbidden" in err_str:
+                await message.reply("Bot was blocked by this user.")
+            else:
+                logging.error(f"Не удалось отправить ответ пользователю: {e}")
 
 async def handle_ban(message: types.Message):
     if not message.reply_to_message:
