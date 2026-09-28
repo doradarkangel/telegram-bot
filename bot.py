@@ -29,36 +29,24 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 db_pool = None
-BANNED_FILE = "banned.txt"
-
-def load_banned_users():
-    if os.path.exists(BANNED_FILE):
-        try:
-            with open(BANNED_FILE, "r") as f:
-                return set(int(line.strip()) for line in f if line.strip().isdigit())
-        except Exception as e:
-            logging.error(f"Ошибка загрузки файла банов: {e}")
-    return set()
-
-def save_banned_users(banned_set):
-    try:
-        with open(BANNED_FILE, "w") as f:
-            for uid in banned_set:
-                f.write(f"{uid}\n")
-    except Exception as e:
-        logging.error(f"Ошибка сохранения файла банов: {e}")
-
-BANNED_USERS = load_banned_users()
+BANNED_USERS = set()  # Кэш забаненных в памяти
 
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"https://telegram-bot-pr8q.onrender.com{WEBHOOK_PATH}"
 
 async def init_db():
-    global db_pool
+    global db_pool, BANNED_USERS
     if DATABASE_URL:
         try:
             db_pool = await asyncpg.create_pool(DATABASE_URL)
             logging.info("Успешное подключение к облачной базе данных!")
+            
+            # Загружаем баны из таблицы banned_users в Supabase при старте
+            async with db_pool.acquire() as connection:
+                rows = await connection.fetch("SELECT user_id FROM banned_users")
+                BANNED_USERS = set(row["user_id"] for row in rows)
+            logging.info(f"Загружено забаненных пользователей из БД: {len(BANNED_USERS)}")
+            
         except Exception as e:
             logging.error(f"Ошибка подключения к БД: {e}")
 
@@ -226,7 +214,6 @@ async def reply_from_group(message: types.Message):
             pass
         return
 
-    # Если сообщение начинается с / или // и это не наши команды выше, пишем Error command.
     if clean_text.startswith("/") or clean_text.startswith("//"):
         await message.reply("Error command.")
         return
@@ -263,9 +250,15 @@ async def handle_ban(message: types.Message):
         await message.reply("❌ Не удалось найти пользователя по этому сообщению.")
         return
 
+    # Сохраняем бан в Supabase навсегда
+    if db_pool:
+        async with db_pool.acquire() as connection:
+            await connection.execute(
+                "INSERT INTO banned_users (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
+                user_id
+            )
+
     BANNED_USERS.add(user_id)
-    save_banned_users(BANNED_USERS)
-    
     await message.reply(f"🚫 Пользователь (ID: `{user_id}`) забанен в боте.")
 
 async def handle_unban(message: types.Message):
@@ -281,8 +274,12 @@ async def handle_unban(message: types.Message):
         return
 
     if user_id in BANNED_USERS:
+        # Удаляем бан из Supabase
+        if db_pool:
+            async with db_pool.acquire() as connection:
+                await connection.execute("DELETE FROM banned_users WHERE user_id = $1", user_id)
+
         BANNED_USERS.remove(user_id)
-        save_banned_users(BANNED_USERS)
         await message.reply(f"✅ Пользователь (ID: `{user_id}`) разбанен.")
     else:
         await message.reply("ℹ️ Этот пользователь не находится в списке забаненных.")
