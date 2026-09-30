@@ -20,6 +20,7 @@ THREAD_LILIT = 42176
 THREAD_SIGA = 43559
 THREAD_ANGELSK = 140213
 THREAD_SMERTN = 136939
+THREAD_HOLOD = 191411
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -149,6 +150,8 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_ANGELSK
     elif "#смертная" in text_lower:
         target_thread = THREAD_SMERTN
+    elif "#холод" in text_lower:
+        target_thread = THREAD_HOLOD
 
     if not target_thread:
         target_thread = await get_user_last_tag(user_id)
