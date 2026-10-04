@@ -189,7 +189,9 @@ async def group_router(message: types.Message):
     clean_text = text.strip()
     
     if clean_text.startswith("/bc") or clean_text.startswith("/broadcast"):
-        await handle_direct_broadcast(message)
+        # Запускаем в фоне, чтобы вебхук моментально ответил Telegram и не дублировал запрос
+        asyncio.create_task(handle_direct_broadcast(message))
+        await message.reply("🚀 Рассылка запущена в фоновом режиме...")
         return
 
     if clean_text.startswith("/delbc"):
@@ -269,80 +271,83 @@ async def handle_unban(message: types.Message):
         await message.reply(f"✅ Пользователь (`{user_id}`) разбанен.")
 
 async def handle_direct_broadcast(message: types.Message):
-    original_text = message.text or message.caption or ""
-    clean_text = original_text
-    if clean_text.startswith("/bc"):
-        clean_text = clean_text[3:].strip()
-    elif clean_text.startswith("/broadcast"):
-        clean_text = clean_text[10:].strip()
+    try:
+        original_text = message.text or message.caption or ""
+        clean_text = original_text
+        if clean_text.startswith("/bc"):
+            clean_text = clean_text[3:].strip()
+        elif clean_text.startswith("/broadcast"):
+            clean_text = clean_text[10:].strip()
 
-    db_users = await get_all_users_for_broadcast()
-    all_users = list(set(db_users) - BANNED_USERS)
-    
-    if not all_users:
-        await message.reply("❌ Нет пользователей для рассылки в базе данных.")
-        return
-
-    broadcast_id = int(time.time())
-    success_count = 0
-    blocked_count = 0
-    
-    broadcast_records = []
-
-    for uid in all_users:
-        try:
-            if message.photo:
-                photo_file_id = message.photo[-1].file_id
-                sent_msg = await bot.send_photo(
-                    chat_id=uid,
-                    photo=photo_file_id,
-                    caption=clean_text,
-                    parse_mode="HTML"
-                )
-            elif message.video:
-                video_file_id = message.video.file_id
-                sent_msg = await bot.send_video(
-                    chat_id=uid,
-                    video=video_file_id,
-                    caption=clean_text,
-                    parse_mode="HTML"
-                )
-            else:
-                sent_msg = await bot.send_message(
-                    chat_id=uid,
-                    text=clean_text,
-                    parse_mode="HTML"
-                )
-
-            if sent_msg:
-                broadcast_records.append((broadcast_id, uid, sent_msg.message_id))
-            
-            success_count += 1
-        except Exception as e:
-            err_str = str(e).lower()
-            if "blocked" in err_str or "deactivated" in err_str or "forbidden" in err_str:
-                blocked_count += 1
+        db_users = await get_all_users_for_broadcast()
+        all_users = list(set(db_users) - BANNED_USERS)
         
-        await asyncio.sleep(0.04)
+        if not all_users:
+            await message.reply("❌ Нет пользователей для рассылки в базе данных.")
+            return
 
-    if db_pool and broadcast_records:
-        try:
-            async with db_pool.acquire() as connection:
-                await connection.executemany(
-                    "INSERT INTO broadcast_messages (broadcast_id, user_id, message_id) VALUES ($1, $2, $3)",
-                    broadcast_records
-                )
-        except Exception as e:
-            logging.error(f"Ошибка сохранения логов рассылки в БД: {e}")
+        broadcast_id = int(time.time())
+        success_count = 0
+        blocked_count = 0
+        
+        broadcast_records = []
 
-    report_msg = await message.reply(
-        f"✅ **Рассылка завершена.**\n\n"
-        f"📬 Получили сообщение: **{success_count}**\n"
-        f"🚫 Заблокировали бота: **{blocked_count}**\n\n"
-        f"🆔 ID рассылки: `{broadcast_id}`\n"
-        f"*(Чтобы удалить ее у всех, сделайте Reply на этот отчет и напишите `/delbc`)*"
-    )
-    REPORT_TO_BROADCAST[report_msg.message_id] = broadcast_id
+        for uid in all_users:
+            try:
+                if message.photo:
+                    photo_file_id = message.photo[-1].file_id
+                    sent_msg = await bot.send_photo(
+                        chat_id=uid,
+                        photo=photo_file_id,
+                        caption=clean_text,
+                        parse_mode="HTML"
+                    )
+                elif message.video:
+                    video_file_id = message.video.file_id
+                    sent_msg = await bot.send_video(
+                        chat_id=uid,
+                        video=video_file_id,
+                        caption=clean_text,
+                        parse_mode="HTML"
+                    )
+                else:
+                    sent_msg = await bot.send_message(
+                        chat_id=uid,
+                        text=clean_text,
+                        parse_mode="HTML"
+                    )
+
+                if sent_msg:
+                    broadcast_records.append((broadcast_id, uid, sent_msg.message_id))
+                
+                success_count += 1
+            except Exception as e:
+                err_str = str(e).lower()
+                if "blocked" in err_str or "deactivated" in err_str or "forbidden" in err_str:
+                    blocked_count += 1
+            
+            await asyncio.sleep(0.04)
+
+        if db_pool and broadcast_records:
+            try:
+                async with db_pool.acquire() as connection:
+                    await connection.executemany(
+                        "INSERT INTO broadcast_messages (broadcast_id, user_id, message_id) VALUES ($1, $2, $3)",
+                        broadcast_records
+                    )
+            except Exception as e:
+                logging.error(f"Ошибка сохранения логов рассылки в БД: {e}")
+
+        report_msg = await message.reply(
+            f"✅ **Рассылка завершена.**\n\n"
+            f"📬 Получили сообщение: **{success_count}**\n"
+            f"🚫 Заблокировали бота: **{blocked_count}**\n\n"
+            f"🆔 ID рассылки: `{broadcast_id}`\n"
+            f"*(Чтобы удалить ее у всех, сделайте Reply на этот отчет и напишите `/delbc`)*"
+        )
+        REPORT_TO_BROADCAST[report_msg.message_id] = broadcast_id
+    except Exception as e:
+        logging.error(f"Ошибка в процессе рассылки: {e}")
 
 async def handle_delete_broadcast(message: types.Message):
     broadcast_id_to_delete = None
