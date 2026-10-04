@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import asyncpg
+import time
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -27,7 +28,8 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 db_pool = None
-BANNED_USERS = set()  
+BANNED_USERS = set()
+REPORT_TO_BROADCAST = {}  # Связь ID отчета в группе с ID рассылки для быстрого удаления
 
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"https://telegram-bot-pr8q.onrender.com{WEBHOOK_PATH}"
@@ -39,35 +41,33 @@ async def init_db():
             db_pool = await asyncpg.create_pool(DATABASE_URL)
             logging.info("Успешное подключение к облачной базе данных!")
             
-            # Загружаем баны из таблицы banned_users в Supabase при старте
             async with db_pool.acquire() as connection:
+                await connection.execute("""
+                    CREATE TABLE IF NOT EXISTS banned_users (
+                        user_id BIGINT PRIMARY KEY
+                    );
+                    CREATE TABLE IF NOT EXISTS user_tags (
+                        user_id BIGINT PRIMARY KEY,
+                        target_thread BIGINT
+                    );
+                    CREATE TABLE IF NOT EXISTS message_map (
+                        forwarded_message_id BIGINT PRIMARY KEY,
+                        user_id BIGINT
+                    );
+                    CREATE TABLE IF NOT EXISTS broadcast_messages (
+                        id SERIAL PRIMARY KEY,
+                        broadcast_id BIGINT,
+                        user_id BIGINT,
+                        message_id BIGINT
+                    );
+                """)
+                
                 rows = await connection.fetch("SELECT user_id FROM banned_users")
                 BANNED_USERS = set(row["user_id"] for row in rows)
             logging.info(f"Загружено забаненных пользователей из БД: {len(BANNED_USERS)}")
             
         except Exception as e:
             logging.error(f"Ошибка подключения к БД: {e}")
-
-async def get_user_last_tag(user_id: int):
-    if not db_pool:
-        return None
-    async with db_pool.acquire() as connection:
-        row = await connection.fetchrow("SELECT target_thread FROM user_tags WHERE user_id = $1", user_id)
-        return row["target_thread"] if row else None
-
-async def save_user_last_tag(user_id: int, thread_id: int):
-    if not db_pool:
-        return
-    async with db_pool.acquire() as connection:
-        await connection.execute(
-            """
-            INSERT INTO user_tags (user_id, target_thread) 
-            VALUES ($1, $2) 
-            ON CONFLICT (user_id) 
-            DO UPDATE SET target_thread = $2
-            """,
-            user_id, thread_id
-        )
 
 async def get_user_by_message(forwarded_msg_id: int):
     if not db_pool:
@@ -88,6 +88,27 @@ async def save_message_mapping(forwarded_msg_id: int, user_id: int):
             DO UPDATE SET user_id = $2
             """,
             forwarded_msg_id, user_id
+        )
+
+async def get_user_thread(user_id: int):
+    if not db_pool:
+        return THREAD_GENERAL
+    async with db_pool.acquire() as connection:
+        row = await connection.fetchrow("SELECT target_thread FROM user_tags WHERE user_id = $1", user_id)
+        return row["target_thread"] if row else THREAD_GENERAL
+
+async def save_user_thread(user_id: int, thread_id: int):
+    if not db_pool:
+        return
+    async with db_pool.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO user_tags (user_id, target_thread) 
+            VALUES ($1, $2) 
+            ON CONFLICT (user_id) 
+            DO UPDATE SET target_thread = $2
+            """,
+            user_id, thread_id
         )
 
 async def get_all_users_for_broadcast():
@@ -130,6 +151,7 @@ async def forward_to_group(message: types.Message):
         await message.answer("Вы забанены администратором")
         return  
     
+    # Текст или подпись к медиа (фото, видео, документ и т.д.)
     text = message.text or message.caption or ""
     text_lower = text.lower()
 
@@ -138,7 +160,7 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_LUNA
     elif "#люц" in text_lower:
         target_thread = THREAD_LYUT
-    elif "#аид" in text_lower:
+    elif "#аид" in text_lower in text_lower:
         target_thread = THREAD_RUSY
     elif "#бусинка" in text_lower:
         target_thread = THREAD_BUSIN
@@ -153,16 +175,15 @@ async def forward_to_group(message: types.Message):
     elif "#холод" in text_lower:
         target_thread = THREAD_HOLOD
 
-    if not target_thread:
-        target_thread = await get_user_last_tag(user_id)
-    
-    if not target_thread:
-        target_thread = THREAD_GENERAL
-
-    if target_thread != THREAD_GENERAL:
-        await save_user_last_tag(user_id, target_thread)
+    if target_thread:
+        # Если пользователь написал тег, сохраняем эту ветку за ним
+        await save_user_thread(user_id, target_thread)
+    else:
+        # Если тега нет, подтягиваем прошлую ветку из базы. Новые пользователи получат THREAD_GENERAL.
+        target_thread = await get_user_thread(user_id)
 
     try:
+        # method message.forward отлично пересылает тексты, фото, кружочки, голосовые, видео и файлы
         forwarded = await message.forward(
             chat_id=GROUP_CHAT_ID,
             message_thread_id=target_thread
@@ -176,17 +197,15 @@ async def forward_to_group(message: types.Message):
                 message_thread_id=THREAD_GENERAL
             )
             await save_message_mapping(forwarded.message_id, user_id)
-            await save_user_last_tag(user_id, THREAD_GENERAL)
-            await message.answer("⚠️ Твой прошлый администратор больше не доступен, поэтому сообщение автоматически перенаправлено в общую ветку.")
+            await message.answer("⚠️ Не удалось доставить сообщение в нужную ветку, оно перенаправлено в общую ветку.")
             return
         except Exception as e2:
             logging.error(f"Не удалось отправить даже в General: {e2}")
 
-        await message.answer("⚠️ Не удалось доставить сообщение администраторам. Попробуй написать с другим тегом.")
+        await message.answer("⚠️ Не удалось доставить сообщение администраторам. Попробуй написать с тегом.")
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def reply_from_group(message: types.Message):
-    # ЗАЩИТА ОТ ЦИКЛА: игнорируем собственные сообщения бота в группе
     if message.from_user.id == bot.id:
         return
 
@@ -195,6 +214,14 @@ async def reply_from_group(message: types.Message):
     
     if clean_text.startswith("/bc") or clean_text.startswith("/broadcast"):
         await handle_broadcast(message)
+        return
+
+    if clean_text.startswith("/delbc"):
+        await handle_delete_broadcast(message)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     if clean_text.startswith("/banpz"):
@@ -238,14 +265,14 @@ async def reply_from_group(message: types.Message):
 
 async def handle_ban(message: types.Message):
     if not message.reply_to_message:
-        await message.reply("⚠️ Сделай Reply (ответ) на сообщение пользователя, которого хочешь забанить, и напиши `/banpz`")
+        await message.reply("⚠ Сделай Reply на сообщение пользователя для бана и напиши `/banpz`")
         return
 
     reply_to_id = message.reply_to_message.message_id
     user_id = await get_user_by_message(reply_to_id)
 
     if not user_id:
-        await message.reply("❌ Не удалось найти пользователя по этому сообщению.")
+        await message.reply("❌ Не удалось найти пользователя.")
         return
 
     if db_pool:
@@ -256,18 +283,18 @@ async def handle_ban(message: types.Message):
             )
 
     BANNED_USERS.add(user_id)
-    await message.reply(f"🚫 Пользователь (ID: `{user_id}`) забанен в боте.")
+    await message.reply(f"🚫 Пользователь (ID: `{user_id}`) забанен.")
 
 async def handle_unban(message: types.Message):
     if not message.reply_to_message:
-        await message.reply("⚠️ Сделай Reply (ответ) на сообщение пользователя, которого хочешь разбанить, и напиши `/unbanpz`")
+        await message.reply("⚠️ Сделай Reply на сообщение пользователя для разбана и напиши `/unbanpz`")
         return
 
     reply_to_id = message.reply_to_message.message_id
     user_id = await get_user_by_message(reply_to_id)
 
     if not user_id:
-        await message.reply("❌ Не удалось найти пользователя по этому сообщению.")
+        await message.reply("❌ Не удалось найти пользователя.")
         return
 
     if user_id in BANNED_USERS:
@@ -278,14 +305,14 @@ async def handle_unban(message: types.Message):
         BANNED_USERS.remove(user_id)
         await message.reply(f"✅ Пользователь (ID: `{user_id}`) разбанен.")
     else:
-        await message.reply("ℹ️ Этот пользователь не находится в списке забаненных.")
+        await message.reply("ℹ️ Пользователь не в бане.")
 
 async def handle_broadcast(message: types.Message):
     text_to_send = message.text or message.caption or ""
-    
     broadcast_text = text_to_send.strip()
+    
     for prefix in ["/broadcast", "/bc"]:
-        if broadcast_text.startswith(prefix):
+        if broadcast_text.lower().startswith(prefix):
             broadcast_text = broadcast_text[len(prefix):].lstrip()
             break
 
@@ -296,21 +323,33 @@ async def handle_broadcast(message: types.Message):
         await message.reply("❌ Нет пользователей для рассылки.")
         return
 
+    broadcast_id = int(time.time())
     success_count = 0
     blocked_count = 0
 
     for uid in all_users:
         try:
-            if message.photo or message.video or message.animation or message.document or message.sticker:
-                await bot.copy_message(
+            if message.photo or message.video or message.animation or message.document or message.audio or message.sticker or message.voice or message.video_note:
+                sent_msg = await bot.copy_message(
                     chat_id=uid,
                     from_chat_id=message.chat.id,
                     message_id=message.message_id,
-                    caption=broadcast_text if broadcast_text else message.caption
+                    caption=broadcast_text if broadcast_text else None
                 )
             else:
-                await bot.send_message(chat_id=uid, text=broadcast_text)
+                sent_msg = await bot.send_message(
+                    chat_id=uid,
+                    text=broadcast_text,
+                    entities=message.entities
+                )
             
+            if db_pool and sent_msg:
+                async with db_pool.acquire() as connection:
+                    await connection.execute(
+                        "INSERT INTO broadcast_messages (broadcast_id, user_id, message_id) VALUES ($1, $2, $3)",
+                        broadcast_id, uid, sent_msg.message_id
+                    )
+
             success_count += 1
             await asyncio.sleep(0.05)
         except Exception as e:
@@ -320,10 +359,59 @@ async def handle_broadcast(message: types.Message):
             else:
                 logging.error(f"Не удалось отправить рассылку юзеру {uid}: {e}")
 
-    await message.reply(
+    report_msg = await message.reply(
         f"✅ Рассылка завершена.\n\n"
         f"📬 Получили сообщение: **{success_count}**\n"
-        f"🚫 Заблокировали бота: **{blocked_count}**"
+        f"🚫 Заблокировали бота: **{blocked_count}**\n\n"
+        f"🆔 ID рассылки: `{broadcast_id}`\n"
+        f"*(Чтобы удалить эту рассылку у всех, сделай Reply на это сообщение и напиши `/delbc`)*"
+    )
+    
+    REPORT_TO_BROADCAST[report_msg.message_id] = broadcast_id
+
+async def handle_delete_broadcast(message: types.Message):
+    broadcast_id_to_delete = None
+
+    if message.reply_to_message and message.reply_to_message.message_id in REPORT_TO_BROADCAST:
+        broadcast_id_to_delete = REPORT_TO_BROADCAST[message.reply_to_message.message_id]
+    else:
+        parts = (message.text or "").split()
+        if len(parts) > 1 and parts[1].isdigit():
+            broadcast_id_to_delete = int(parts[1])
+
+    if not broadcast_id_to_delete:
+        await message.reply("⚠️ Сделай Reply на сообщение с отчетом о рассылке и напиши `/delbc`, либо укажи ID: `/delbc <ID>`")
+        return
+
+    if not db_pool:
+        await message.reply("❌ База данных недоступна.")
+        return
+
+    async with db_pool.acquire() as connection:
+        rows = await connection.fetch("SELECT user_id, message_id FROM broadcast_messages WHERE broadcast_id = $1", broadcast_id_to_delete)
+        
+    if not rows:
+        await message.reply("❌ Рассылка с таким ID не найдена в базе данных.")
+        return
+
+    deleted_count = 0
+    failed_count = 0
+
+    for row in rows:
+        try:
+            await bot.delete_message(chat_id=row["user_id"], message_id=row["message_id"])
+            deleted_count += 1
+            await asyncio.sleep(0.04)
+        except Exception:
+            failed_count += 1
+
+    async with db_pool.acquire() as connection:
+        await connection.execute("DELETE FROM broadcast_messages WHERE broadcast_id = $1", broadcast_id_to_delete)
+
+    await message.reply(
+        f"🗑 Рассылка `{broadcast_id_to_delete}` удалена.\n\n"
+        f"✅ Успешно удалено у пользователей: **{deleted_count}**\n"
+        f"ℹ️ Не удалось удалить (удалили чат/прошло много времени): **{failed_count}**"
     )
 
 async def handle_webhook(request: web.Request):
@@ -332,7 +420,7 @@ async def handle_webhook(request: web.Request):
         telegram_update = Update(**data)
         await dp.feed_update(bot=bot, update=telegram_update)
         return web.Response(status=200)
-    except Exception as e:
+    exceptException as e:
         logging.error(f"Ошибка при обработке вебхука: {e}")
         return web.Response(status=500)
 
