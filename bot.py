@@ -188,7 +188,7 @@ async def group_router(message: types.Message):
     text = message.text or message.caption or ""
     clean_text = text.strip()
     
-    # ПРОВЕРКА РАССЫЛКИ: Если сообщение начинается с /bc (как на твоем скриншоте)
+    # ПРОВЕРКА РАССЫЛКИ: Если сообщение начинается с /bc или /broadcast
     if clean_text.startswith("/bc") or clean_text.startswith("/broadcast"):
         await handle_direct_broadcast(message)
         return
@@ -270,6 +270,13 @@ async def handle_unban(message: types.Message):
         await message.reply(f"✅ Пользователь (`{user_id}`) разбанен.")
 
 async def handle_direct_broadcast(message: types.Message):
+    original_text = message.text or message.caption or ""
+    clean_text = original_text
+    if clean_text.startswith("/bc"):
+        clean_text = clean_text[3:].strip()
+    elif clean_text.startswith("/broadcast"):
+        clean_text = clean_text[10:].strip()
+
     db_users = await get_all_users_for_broadcast()
     all_users = list(set(db_users) - BANNED_USERS)
     
@@ -281,15 +288,32 @@ async def handle_direct_broadcast(message: types.Message):
     success_count = 0
     blocked_count = 0
 
-    # Функция отправки конкретному пользователю с полным сохранением медиа, шрифтов и разметки
     async def send_to_user(uid):
         nonlocal success_count, blocked_count
         try:
-            sent_msg = await bot.copy_message(
-                chat_id=uid,
-                from_chat_id=message.chat.id,
-                message_id=message.message_id
-            )
+            if message.photo:
+                photo_file_id = message.photo[-1].file_id
+                sent_msg = await bot.send_photo(
+                    chat_id=uid,
+                    photo=photo_file_id,
+                    caption=clean_text,
+                    parse_mode="HTML"
+                )
+            elif message.video:
+                video_file_id = message.video.file_id
+                sent_msg = await bot.send_video(
+                    chat_id=uid,
+                    video=video_file_id,
+                    caption=clean_text,
+                    parse_mode="HTML"
+                )
+            else:
+                sent_msg = await bot.send_message(
+                    chat_id=uid,
+                    text=clean_text,
+                    parse_mode="HTML"
+                )
+
             if db_pool and sent_msg:
                 async with db_pool.acquire() as connection:
                     await connection.execute(
@@ -302,7 +326,6 @@ async def handle_direct_broadcast(message: types.Message):
             if "blocked" in err_str or "deactivated" in err_str or "forbidden" in err_str:
                 blocked_count += 1
 
-    # Быстрая параллельная рассылка
     batch_size = 30
     for i in range(0, len(all_users), batch_size):
         batch = all_users[i:i + batch_size]
