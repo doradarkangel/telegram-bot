@@ -188,7 +188,6 @@ async def group_router(message: types.Message):
     text = message.text or message.caption or ""
     clean_text = text.strip()
     
-    # ПРОВЕРКА РАССЫЛКИ: Если сообщение начинается с /bc или /broadcast
     if clean_text.startswith("/bc") or clean_text.startswith("/broadcast"):
         await handle_direct_broadcast(message)
         return
@@ -287,9 +286,10 @@ async def handle_direct_broadcast(message: types.Message):
     broadcast_id = int(time.time())
     success_count = 0
     blocked_count = 0
+    
+    broadcast_records = []
 
-    async def send_to_user(uid):
-        nonlocal success_count, blocked_count
+    for uid in all_users:
         try:
             if message.photo:
                 photo_file_id = message.photo[-1].file_id
@@ -314,23 +314,26 @@ async def handle_direct_broadcast(message: types.Message):
                     parse_mode="HTML"
                 )
 
-            if db_pool and sent_msg:
-                async with db_pool.acquire() as connection:
-                    await connection.execute(
-                        "INSERT INTO broadcast_messages (broadcast_id, user_id, message_id) VALUES ($1, $2, $3)",
-                        broadcast_id, uid, sent_msg.message_id
-                    )
+            if sent_msg:
+                broadcast_records.append((broadcast_id, uid, sent_msg.message_id))
+            
             success_count += 1
         except Exception as e:
             err_str = str(e).lower()
             if "blocked" in err_str or "deactivated" in err_str or "forbidden" in err_str:
                 blocked_count += 1
+        
+        await asyncio.sleep(0.04)
 
-    batch_size = 30
-    for i in range(0, len(all_users), batch_size):
-        batch = all_users[i:i + batch_size]
-        await asyncio.gather(*(send_to_user(uid) for uid in batch))
-        await asyncio.sleep(0.05)
+    if db_pool and broadcast_records:
+        try:
+            async with db_pool.acquire() as connection:
+                await connection.executemany(
+                    "INSERT INTO broadcast_messages (broadcast_id, user_id, message_id) VALUES ($1, $2, $3)",
+                    broadcast_records
+                )
+        except Exception as e:
+            logging.error(f"Ошибка сохранения логов рассылки в БД: {e}")
 
     report_msg = await message.reply(
         f"✅ **Рассылка завершена.**\n\n"
