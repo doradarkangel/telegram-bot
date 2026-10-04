@@ -420,7 +420,7 @@ async def handle_webhook(request: web.Request):
         telegram_update = Update(**data)
         await dp.feed_update(bot=bot, update=telegram_update)
         return web.Response(status=200)
-    exceptException as e:
+    except Exception as e:
         logging.error(f"Ошибка при обработке вебхука: {e}")
         return web.Response(status=500)
 
