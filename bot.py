@@ -186,6 +186,10 @@ async def forward_to_group(message: types.Message):
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def reply_from_group(message: types.Message):
+    # ЗАЩИТА ОТ ЦИКЛА: игнорируем собственные сообщения бота в группе
+    if message.from_user.id == bot.id:
+        return
+
     text = message.text or message.caption or ""
     clean_text = text.strip()
     
@@ -244,7 +248,6 @@ async def handle_ban(message: types.Message):
         await message.reply("❌ Не удалось найти пользователя по этому сообщению.")
         return
 
-    # Сохраняем бан в Supabase навсегда
     if db_pool:
         async with db_pool.acquire() as connection:
             await connection.execute(
@@ -268,7 +271,6 @@ async def handle_unban(message: types.Message):
         return
 
     if user_id in BANNED_USERS:
-        # Удаляем бан из Supabase
         if db_pool:
             async with db_pool.acquire() as connection:
                 await connection.execute("DELETE FROM banned_users WHERE user_id = $1", user_id)
@@ -313,9 +315,10 @@ async def handle_broadcast(message: types.Message):
             await asyncio.sleep(0.05)
         except Exception as e:
             err_str = str(e).lower()
-            if "blocked" in err_str or "deactivated" in err_str:
+            if "blocked" in err_str or "deactivated" in err_str or "forbidden" in err_str:
                 blocked_count += 1
-            logging.error(f"Не удалось отправить рассылку юзеру {uid}: {e}")
+            else:
+                logging.error(f"Не удалось отправить рассылку юзеру {uid}: {e}")
 
     await message.reply(
         f"✅ Рассылка завершена.\n\n"
