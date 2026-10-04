@@ -27,7 +27,7 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 db_pool = None
-BANNED_USERS = set()  # Кэш забаненных в памяти
+BANNED_USERS = set()  
 
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"https://telegram-bot-pr8q.onrender.com{WEBHOOK_PATH}"
