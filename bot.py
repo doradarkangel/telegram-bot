@@ -237,6 +237,10 @@ async def group_router(message: types.Message):
             pass
         return
 
+    if message.reply_to_message and (clean_text.startswith("/") or clean_text.startswith("//")):
+        await message.reply("Error command")
+        return
+    
     if clean_text.startswith("/") or clean_text.startswith("//"):
         return
 
