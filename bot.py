@@ -23,7 +23,8 @@ THREAD_SIGA = 43559
 THREAD_ANGELSK = 140213
 THREAD_SMERTN = 136939
 THREAD_HOLOD = 191411
-THREAD_MEL = 218694
+THREAD_ADI = 261053
+THREAD_POKL = 261057
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -175,8 +176,10 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_SMERTN
     elif "#холод" in text_lower:
         target_thread = THREAD_HOLOD
-    elif "#мэл" in text_lower:
-        target_thread = THREAD_MEL
+    elif "#ади" in text_lower:
+        target_thread = THREAD_ADI
+    elif "#поклонник" in text_lower:
+        target_thread = THREAD_POKL
 
     if target_thread:
         await save_user_thread(user_id, target_thread)
