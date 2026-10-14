@@ -213,7 +213,6 @@ async def group_router(message: types.Message):
     clean_text = text.strip()
     
     if clean_text.startswith("/bc") or clean_text.startswith("/broadcast"):
-        # Запускаем в фоне, чтобы вебхук моментально ответил Telegram и не дублировал запрос
         asyncio.create_task(handle_direct_broadcast(message))
         await message.reply("🚀 Рассылка запущена в фоновом режиме...")
         return
@@ -242,7 +241,7 @@ async def group_router(message: types.Message):
         return
 
     if message.reply_to_message and (clean_text.startswith("/") or clean_text.startswith("//")):
-        await message.reply("Error command")
+        await message.reply("Error command.")
         return
     
     if clean_text.startswith("/") or clean_text.startswith("//"):
