@@ -42,7 +42,12 @@ async def init_db():
     global db_pool, BANNED_USERS
     if DATABASE_URL:
         try:
-            db_pool = await asyncpg.create_pool(DATABASE_URL)
+            db_pool = await asyncpg.create_pool(
+                DATABASE_URL,
+                min_size=1,
+                max_size=5,
+                max_inactive_connection_lifetime=300
+            )
             logging.info("Успешное подключение к облачной базе данных!")
             
             async with db_pool.acquire() as connection:
