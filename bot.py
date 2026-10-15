@@ -25,6 +25,7 @@ THREAD_SMERTN = 136939
 THREAD_ADI = 261053
 THREAD_POKL = 261057
 THREAD_KEYA = 261165
+THREAD_SAYMON = 283228
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -180,6 +181,8 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_POKL
     elif "#кейа" in text_lower:
         target_thread = THREAD_KEYA
+    elif "#саймон" in text_lower:
+        target_thread = THREAD_SAYMON
 
 
     if target_thread:
