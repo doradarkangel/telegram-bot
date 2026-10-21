@@ -60,13 +60,7 @@ async def init_db():
                     );
                     CREATE TABLE IF NOT EXISTS message_map (
                         forwarded_message_id BIGINT PRIMARY KEY,
-                        user_id BIGINT,
-                        user_message_id BIGINT
-                    );
-                    CREATE TABLE IF NOT EXISTS admin_message_map (
-                        admin_message_id BIGINT PRIMARY KEY,
-                        user_id BIGINT,
-                        user_message_id BIGINT
+                        user_id BIGINT
                     );
                     CREATE TABLE IF NOT EXISTS broadcast_messages (
                         id SERIAL PRIMARY KEY,
@@ -95,47 +89,19 @@ async def get_user_by_message(forwarded_msg_id: int):
         row = await connection.fetchrow("SELECT user_id FROM message_map WHERE forwarded_message_id = $1", forwarded_msg_id)
         return row["user_id"] if row else None
 
-async def save_message_mapping(forwarded_msg_id: int, user_id: int, user_msg_id: int):
+async def save_message_mapping(forwarded_msg_id: int, user_id: int):
     if not db_pool:
         return
     async with db_pool.acquire() as connection:
         await connection.execute(
             """
-            INSERT INTO message_map (forwarded_message_id, user_id, user_message_id) 
-            VALUES ($1, $2, $3) 
+            INSERT INTO message_map (forwarded_message_id, user_id) 
+            VALUES ($1, $2) 
             ON CONFLICT (forwarded_message_id) 
-            DO UPDATE SET user_id = $2, user_message_id = $3
+            DO UPDATE SET user_id = $2
             """,
-            forwarded_msg_id, user_id, user_msg_id
+            forwarded_msg_id, user_id
         )
-
-async def get_mapping_by_user_msg(user_id: int, user_msg_id: int):
-    if not db_pool:
-        return None
-    async with db_pool.acquire() as connection:
-        row = await connection.fetchrow("SELECT forwarded_message_id FROM message_map WHERE user_id = $1 AND user_message_id = $2", user_id, user_msg_id)
-        return row["forwarded_message_id"] if row else None
-
-async def save_admin_mapping(admin_msg_id: int, user_id: int, user_msg_id: int):
-    if not db_pool:
-        return
-    async with db_pool.acquire() as connection:
-        await connection.execute(
-            """
-            INSERT INTO admin_message_map (admin_message_id, user_id, user_message_id) 
-            VALUES ($1, $2, $3) 
-            ON CONFLICT (admin_message_id) 
-            DO UPDATE SET user_id = $2, user_message_id = $3
-            """,
-            admin_msg_id, user_id, user_msg_id
-        )
-
-async def get_admin_mapping(admin_msg_id: int):
-    if not db_pool:
-        return None
-    async with db_pool.acquire() as connection:
-        row = await connection.fetchrow("SELECT user_id, user_message_id FROM admin_message_map WHERE admin_message_id = $1", admin_msg_id)
-        return dict(row) if row else None
 
 async def get_user_thread(user_id: int):
     if not db_pool:
@@ -236,7 +202,7 @@ async def forward_to_group(message: types.Message):
             chat_id=GROUP_CHAT_ID,
             message_thread_id=target_thread
         )
-        await save_message_mapping(forwarded.message_id, user_id, message.message_id)
+        await save_message_mapping(forwarded.message_id, user_id)
     except Exception as e:
         logging.error(f"ОШИБКА ПЕРЕСЫЛКИ: {e}")
         try:
@@ -244,87 +210,9 @@ async def forward_to_group(message: types.Message):
                 chat_id=GROUP_CHAT_ID,
                 message_thread_id=THREAD_GENERAL
             )
-            await save_message_mapping(forwarded.message_id, user_id, message.message_id)
+            await save_message_mapping(forwarded.message_id, user_id)
         except Exception:
             pass
-
-@dp.edited_message(F.chat.type == "private")
-async def edit_user_message(message: types.Message):
-    user_id = message.from_user.id
-    if user_id in BANNED_USERS:
-        return
-    
-    group_msg_id = await get_mapping_by_user_msg(user_id, message.message_id)
-    if not group_msg_id:
-        return
-    
-    text = message.text or message.caption or ""
-    entities = message.entities or message.caption_entities or []
-    
-    try:
-        if message.photo:
-            await bot.edit_message_caption(
-                chat_id=GROUP_CHAT_ID,
-                message_id=group_msg_id,
-                caption=text,
-                caption_entities=entities
-            )
-        elif message.video:
-            await bot.edit_message_caption(
-                chat_id=GROUP_CHAT_ID,
-                message_id=group_msg_id,
-                caption=text,
-                caption_entities=entities
-            )
-        else:
-            await bot.edit_message_text(
-                chat_id=GROUP_CHAT_ID,
-                message_id=group_msg_id,
-                text=text,
-                entities=entities
-            )
-    except Exception as e:
-        logging.error(f"Ошибка редактирования сообщения в группе: {e}")
-
-@dp.edited_message(F.chat.type.in_({"group", "supergroup"}))
-async def edit_admin_message(message: types.Message):
-    if message.chat.id != GROUP_CHAT_ID:
-        return
-    
-    mapping = await get_admin_mapping(message.message_id)
-    if not mapping:
-        return
-    
-    user_id = mapping["user_id"]
-    user_msg_id = mapping["user_message_id"]
-    
-    text = message.text or message.caption or ""
-    entities = message.entities or message.caption_entities or []
-    
-    try:
-        if message.photo:
-            await bot.edit_message_caption(
-                chat_id=user_id,
-                message_id=user_msg_id,
-                caption=text,
-                caption_entities=entities
-            )
-        elif message.video:
-            await bot.edit_message_caption(
-                chat_id=user_id,
-                message_id=user_msg_id,
-                caption=text,
-                caption_entities=entities
-            )
-        else:
-            await bot.edit_message_text(
-                chat_id=user_id,
-                message_id=user_msg_id,
-                text=text,
-                entities=entities
-            )
-    except Exception as e:
-        logging.error(f"Ошибка редактирования сообщения пользователя: {e}")
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def group_router(message: types.Message):
@@ -384,13 +272,11 @@ async def group_router(message: types.Message):
 
     if user_id:
         try:
-            sent_to_user = await bot.copy_message(
+            await bot.copy_message(
                 chat_id=user_id,
                 from_chat_id=message.chat.id,
                 message_id=message.message_id
             )
-            if sent_to_user:
-                await save_admin_mapping(message.message_id, user_id, sent_to_user.message_id)
         except Exception as e:
             err_str = str(e).lower()
             if "blocked" in err_str or "deactivated" in err_str or "forbidden" in err_str:
@@ -635,7 +521,7 @@ async def handle_ping(request: web.Request):
 async def main():
     await init_db()
     await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(WEBHOOK_URL, allowed_updates=["message", "callback_query", "edited_message"])
+    await bot.set_webhook(WEBHOOK_URL, allowed_updates=["message", "callback_query"])
 
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
