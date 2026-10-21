@@ -25,7 +25,6 @@ THREAD_SMERTN = 136939
 THREAD_ADI = 261053
 THREAD_POKL = 261057
 THREAD_KEYA = 261165
-THREAD_SAYMON = 283228
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -61,13 +60,24 @@ async def init_db():
                     );
                     CREATE TABLE IF NOT EXISTS message_map (
                         forwarded_message_id BIGINT PRIMARY KEY,
-                        user_id BIGINT
+                        user_id BIGINT,
+                        user_message_id BIGINT
+                    );
+                    CREATE TABLE IF NOT EXISTS admin_message_map (
+                        admin_message_id BIGINT PRIMARY KEY,
+                        user_id BIGINT,
+                        user_message_id BIGINT
                     );
                     CREATE TABLE IF NOT EXISTS broadcast_messages (
                         id SERIAL PRIMARY KEY,
                         broadcast_id BIGINT,
                         user_id BIGINT,
                         message_id BIGINT
+                    );
+                    CREATE TABLE IF NOT EXISTS warnings (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT,
+                        created_at DOUBLE PRECISION
                     );
                 """)
                 
@@ -85,19 +95,47 @@ async def get_user_by_message(forwarded_msg_id: int):
         row = await connection.fetchrow("SELECT user_id FROM message_map WHERE forwarded_message_id = $1", forwarded_msg_id)
         return row["user_id"] if row else None
 
-async def save_message_mapping(forwarded_msg_id: int, user_id: int):
+async def save_message_mapping(forwarded_msg_id: int, user_id: int, user_msg_id: int):
     if not db_pool:
         return
     async with db_pool.acquire() as connection:
         await connection.execute(
             """
-            INSERT INTO message_map (forwarded_message_id, user_id) 
-            VALUES ($1, $2) 
+            INSERT INTO message_map (forwarded_message_id, user_id, user_message_id) 
+            VALUES ($1, $2, $3) 
             ON CONFLICT (forwarded_message_id) 
-            DO UPDATE SET user_id = $2
+            DO UPDATE SET user_id = $2, user_message_id = $3
             """,
-            forwarded_msg_id, user_id
+            forwarded_msg_id, user_id, user_msg_id
         )
+
+async def get_mapping_by_user_msg(user_id: int, user_msg_id: int):
+    if not db_pool:
+        return None
+    async with db_pool.acquire() as connection:
+        row = await connection.fetchrow("SELECT forwarded_message_id FROM message_map WHERE user_id = $1 AND user_message_id = $2", user_id, user_msg_id)
+        return row["forwarded_message_id"] if row else None
+
+async def save_admin_mapping(admin_msg_id: int, user_id: int, user_msg_id: int):
+    if not db_pool:
+        return
+    async with db_pool.acquire() as connection:
+        await connection.execute(
+            """
+            INSERT INTO admin_message_map (admin_message_id, user_id, user_message_id) 
+            VALUES ($1, $2, $3) 
+            ON CONFLICT (admin_message_id) 
+            DO UPDATE SET user_id = $2, user_message_id = $3
+            """,
+            admin_msg_id, user_id, user_msg_id
+        )
+
+async def get_admin_mapping(admin_msg_id: int):
+    if not db_pool:
+        return None
+    async with db_pool.acquire() as connection:
+        row = await connection.fetchrow("SELECT user_id, user_message_id FROM admin_message_map WHERE admin_message_id = $1", admin_msg_id)
+        return dict(row) if row else None
 
 async def get_user_thread(user_id: int):
     if not db_pool:
@@ -186,8 +224,6 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_POKL
     elif "#кейа" in text_lower:
         target_thread = THREAD_KEYA
-    elif "#саймон" in text_lower:
-        target_thread = THREAD_SAYMON
 
 
     if target_thread:
@@ -200,7 +236,7 @@ async def forward_to_group(message: types.Message):
             chat_id=GROUP_CHAT_ID,
             message_thread_id=target_thread
         )
-        await save_message_mapping(forwarded.message_id, user_id)
+        await save_message_mapping(forwarded.message_id, user_id, message.message_id)
     except Exception as e:
         logging.error(f"ОШИБКА ПЕРЕСЫЛКИ: {e}")
         try:
@@ -208,9 +244,82 @@ async def forward_to_group(message: types.Message):
                 chat_id=GROUP_CHAT_ID,
                 message_thread_id=THREAD_GENERAL
             )
-            await save_message_mapping(forwarded.message_id, user_id)
+            await save_message_mapping(forwarded.message_id, user_id, message.message_id)
         except Exception:
             pass
+
+@dp.edited_message(F.chat.type == "private")
+async def edit_user_message(message: types.Message):
+    user_id = message.from_user.id
+    if user_id in BANNED_USERS:
+        return
+    
+    old_group_msg_id = await get_mapping_by_user_msg(user_id, message.message_id)
+    if not old_group_msg_id:
+        return
+    
+    try:
+        await bot.delete_message(chat_id=GROUP_CHAT_ID, message_id=old_group_msg_id)
+    except Exception:
+        pass
+    
+    target_thread = await get_user_thread(user_id)
+    
+    try:
+        forwarded = await message.forward(
+            chat_id=GROUP_CHAT_ID,
+            message_thread_id=target_thread
+        )
+        await save_message_mapping(forwarded.message_id, user_id, message.message_id)
+    except Exception:
+        try:
+            forwarded = await message.forward(
+                chat_id=GROUP_CHAT_ID,
+                message_thread_id=THREAD_GENERAL
+            )
+            await save_message_mapping(forwarded.message_id, user_id, message.message_id)
+        except Exception:
+            pass
+
+@dp.edited_message(F.chat.type.in_({"group", "supergroup"}))
+async def edit_admin_message(message: types.Message):
+    if message.chat.id != GROUP_CHAT_ID:
+        return
+    
+    mapping = await get_admin_mapping(message.message_id)
+    if not mapping:
+        return
+    
+    user_id = mapping["user_id"]
+    user_msg_id = mapping["user_message_id"]
+    
+    text = message.text or message.caption or ""
+    entities = message.entities or message.caption_entities or []
+    
+    try:
+        if message.photo:
+            await bot.edit_message_caption(
+                chat_id=user_id,
+                message_id=user_msg_id,
+                caption=text,
+                caption_entities=entities
+            )
+        elif message.video:
+            await bot.edit_message_caption(
+                chat_id=user_id,
+                message_id=user_msg_id,
+                caption=text,
+                caption_entities=entities
+            )
+        else:
+            await bot.edit_message_text(
+                chat_id=user_id,
+                message_id=user_msg_id,
+                text=text,
+                entities=entities
+            )
+    except Exception as e:
+        logging.error(f"Ошибка редактирования сообщения пользователя: {e}")
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def group_router(message: types.Message):
@@ -247,6 +356,13 @@ async def group_router(message: types.Message):
         except Exception:
             pass
         return
+    elif clean_text.startswith("/warnpz"):
+        await handle_warn(message)
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        return
 
     if message.reply_to_message and (clean_text.startswith("/") or clean_text.startswith("//")):
         await message.reply("Error command.")
@@ -263,11 +379,13 @@ async def group_router(message: types.Message):
 
     if user_id:
         try:
-            await bot.copy_message(
+            sent_to_user = await bot.copy_message(
                 chat_id=user_id,
                 from_chat_id=message.chat.id,
                 message_id=message.message_id
             )
+            if sent_to_user:
+                await save_admin_mapping(message.message_id, user_id, sent_to_user.message_id)
         except Exception as e:
             err_str = str(e).lower()
             if "blocked" in err_str or "deactivated" in err_str or "forbidden" in err_str:
@@ -290,6 +408,10 @@ async def handle_ban(message: types.Message):
             )
     BANNED_USERS.add(user_id)
     await message.reply(f"🚫 Пользователь (`{user_id}`) забанен.")
+    try:
+        await bot.send_message(chat_id=user_id, text="Вы забанены администратором")
+    except Exception:
+        pass
 
 async def handle_unban(message: types.Message):
     if not message.reply_to_message:
@@ -305,14 +427,88 @@ async def handle_unban(message: types.Message):
         BANNED_USERS.remove(user_id)
         await message.reply(f"✅ Пользователь (`{user_id}`) разбанен.")
 
+async def handle_warn(message: types.Message):
+    if not message.reply_to_message:
+        return
+    user_id = await get_user_by_message(message.reply_to_message.message_id)
+    if not user_id:
+        return
+
+    current_time = time.time()
+    week_ago = current_time - (7 * 24 * 60 * 60)
+
+    if db_pool:
+        async with db_pool.acquire() as connection:
+            await connection.execute(
+                "DELETE FROM warnings WHERE user_id = $1 AND created_at < $2",
+                user_id, week_ago
+            )
+            await connection.execute(
+                "INSERT INTO warnings (user_id, created_at) VALUES ($1, $2)",
+                user_id, current_time
+            )
+            row = await connection.fetchrow(
+                "SELECT COUNT(*) as count FROM warnings WHERE user_id = $1 AND created_at >= $2",
+                user_id, week_ago
+            )
+            warn_count = row["count"] if row else 1
+
+        if warn_count >= 3:
+            async with db_pool.acquire() as connection:
+                await connection.execute(
+                    "INSERT INTO banned_users (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
+                    user_id
+                )
+                await connection.execute("DELETE FROM warnings WHERE user_id = $1", user_id)
+            BANNED_USERS.add(user_id)
+            await message.reply(f"🚫 Пользователь (`{user_id}`) накопил 3 предупреждения и автоматически забанен.")
+            try:
+                await bot.send_message(chat_id=user_id, text="Вы забанены администратором")
+            except Exception:
+                pass
+        else:
+            left = 3 - warn_count
+            await message.reply(f"⚠️ Пользователю (`{user_id}`) выдан варн. Активных предупреждений: {warn_count}/3.")
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=f"⚠️ Вам выдано предупреждение ({warn_count}/3). До бана осталось предупреждений: {left}."
+                )
+            except Exception:
+                pass
+
 async def handle_direct_broadcast(message: types.Message):
     try:
         original_text = message.text or message.caption or ""
-        clean_text = original_text
-        if clean_text.startswith("/bc"):
-            clean_text = clean_text[3:].strip()
-        elif clean_text.startswith("/broadcast"):
-            clean_text = clean_text[10:].strip()
+        entities = message.entities or message.caption_entities or []
+        
+        shift = 0
+        if original_text.startswith("/bc"):
+            shift = 3
+        elif original_text.startswith("/broadcast"):
+            shift = 10
+
+        remaining = original_text[shift:]
+        lstripped_count = len(remaining) - len(remaining.lstrip())
+        total_shift = shift + lstripped_count
+        clean_text = remaining.lstrip()
+
+        adjusted_entities = []
+        if entities:
+            for entity in entities:
+                new_offset = entity.offset - total_shift
+                if new_offset >= 0:
+                    adjusted_entities.append(
+                        types.MessageEntity(
+                            type=entity.type,
+                            offset=new_offset,
+                            length=entity.length,
+                            url=entity.url,
+                            user=entity.user,
+                            language=entity.language,
+                            custom_emoji_id=getattr(entity, 'custom_emoji_id', None)
+                        )
+                    )
 
         db_users = await get_all_users_for_broadcast()
         all_users = list(set(db_users) - BANNED_USERS)
@@ -335,7 +531,7 @@ async def handle_direct_broadcast(message: types.Message):
                         chat_id=uid,
                         photo=photo_file_id,
                         caption=clean_text,
-                        parse_mode="HTML"
+                        caption_entities=adjusted_entities
                     )
                 elif message.video:
                     video_file_id = message.video.file_id
@@ -343,13 +539,13 @@ async def handle_direct_broadcast(message: types.Message):
                         chat_id=uid,
                         video=video_file_id,
                         caption=clean_text,
-                        parse_mode="HTML"
+                        caption_entities=adjusted_entities
                     )
                 else:
                     sent_msg = await bot.send_message(
                         chat_id=uid,
                         text=clean_text,
-                        parse_mode="HTML"
+                        entities=adjusted_entities
                     )
 
                 if sent_msg:
@@ -434,7 +630,7 @@ async def handle_ping(request: web.Request):
 async def main():
     await init_db()
     await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(WEBHOOK_URL, allowed_updates=["message", "callback_query"])
+    await bot.set_webhook(WEBHOOK_URL, allowed_updates=["message", "callback_query", "edited_message"])
 
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
