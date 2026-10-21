@@ -254,32 +254,37 @@ async def edit_user_message(message: types.Message):
     if user_id in BANNED_USERS:
         return
     
-    old_group_msg_id = await get_mapping_by_user_msg(user_id, message.message_id)
-    if not old_group_msg_id:
+    group_msg_id = await get_mapping_by_user_msg(user_id, message.message_id)
+    if not group_msg_id:
         return
     
-    try:
-        await bot.delete_message(chat_id=GROUP_CHAT_ID, message_id=old_group_msg_id)
-    except Exception:
-        pass
-    
-    target_thread = await get_user_thread(user_id)
+    text = message.text or message.caption or ""
+    entities = message.entities or message.caption_entities or []
     
     try:
-        forwarded = await message.forward(
-            chat_id=GROUP_CHAT_ID,
-            message_thread_id=target_thread
-        )
-        await save_message_mapping(forwarded.message_id, user_id, message.message_id)
-    except Exception:
-        try:
-            forwarded = await message.forward(
+        if message.photo:
+            await bot.edit_message_caption(
                 chat_id=GROUP_CHAT_ID,
-                message_thread_id=THREAD_GENERAL
+                message_id=group_msg_id,
+                caption=text,
+                caption_entities=entities
             )
-            await save_message_mapping(forwarded.message_id, user_id, message.message_id)
-        except Exception:
-            pass
+        elif message.video:
+            await bot.edit_message_caption(
+                chat_id=GROUP_CHAT_ID,
+                message_id=group_msg_id,
+                caption=text,
+                caption_entities=entities
+            )
+        else:
+            await bot.edit_message_text(
+                chat_id=GROUP_CHAT_ID,
+                message_id=group_msg_id,
+                text=text,
+                entities=entities
+            )
+    except Exception as e:
+        logging.error(f"Ошибка редактирования сообщения в группе: {e}")
 
 @dp.edited_message(F.chat.type.in_({"group", "supergroup"}))
 async def edit_admin_message(message: types.Message):
