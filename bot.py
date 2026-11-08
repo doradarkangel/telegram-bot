@@ -24,7 +24,7 @@ THREAD_ANGELSK = 140213
 THREAD_SMERTN = 136939
 THREAD_POKL = 261057
 THREAD_ALY = 402727
-THREAD_SU = 402725
+THREAD_KEYA = 402725
 THREAD_MYAW = 402723
 
 logging.basicConfig(level=logging.INFO)
@@ -209,8 +209,8 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_ALY
     elif "#поклонник" in text_lower:
         target_thread = THREAD_POKL
-    elif "#су" in text_lower:
-        target_thread = THREAD_SU
+    elif "#кейа" in text_lower:
+        target_thread = THREAD_KEYA
     elif "#мявка" in text_lower:
         target_thread = THREAD_MYAW
 
