@@ -207,7 +207,7 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_SMERTN
     elif "#ахинея" in text_lower:
         target_thread = THREAD_AHI
-    elif "#поклонник" in text_lower:
+    elif "#зейд" in text_lower:
         target_thread = THREAD_POKL
     elif "#кейа" in text_lower:
         target_thread = THREAD_KEYA
