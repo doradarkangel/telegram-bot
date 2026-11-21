@@ -23,9 +23,11 @@ THREAD_SIGA = 43559
 THREAD_ANGELSK = 140213
 THREAD_SMERTN = 136939
 THREAD_POKL = 261057
-THREAD_AHI = 433561
+THREAD_LIS = 433561
 THREAD_KEYA = 402725
 THREAD_SAXAR = 433553
+THREAD_AKIRA = 448378
+THREAD_REV = 448383
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -205,14 +207,18 @@ async def forward_to_group(message: types.Message):
         target_thread = THREAD_ANGELSK
     elif "#смертная" in text_lower:
         target_thread = THREAD_SMERTN
-    elif "#ахинея" in text_lower:
-        target_thread = THREAD_AHI
+    elif "#лис" in text_lower:
+        target_thread = THREAD_LIS
     elif "#зейд" in text_lower:
         target_thread = THREAD_POKL
     elif "#кейа" in text_lower:
         target_thread = THREAD_KEYA
     elif "#сахарок" in text_lower:
         target_thread = THREAD_SAXAR
+    elif "#акира" in text_lower:
+        target_thread = THREAD_AKIRA
+    elif "#реверт" in text_lower:
+        target_thread = THREAD_REV
 
 
     if target_thread:
